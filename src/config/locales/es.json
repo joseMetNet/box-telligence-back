@@ -1,0 +1,22 @@
+{
+	"global": {
+		"error_server": "Ocurrió un error en el servidor",
+		"test_created": "Se creo con exito el test",
+		"invalid_body": "Datos del request incorrectos",
+		"successfull_operation": "La operación se realizó con exito",
+		"bad_credentials": "Credenciales incorrectas",
+		"not_authorization": "No tienes permisos de autorizacion",
+		"not_found": "No se encontro el recurso",
+		"not_file": "No hay archivos que subir - key: archivo",
+		"error_routes": "Error en los campos requeridos"
+	},
+	"login": {
+		"successful": "OK",
+		"error_server": "Ocurrió un error en el servidor",
+		"error_invalid_credentials": "El correo o contraseña son incorrectos",
+		"file_required": "Este campo es requerido",
+		"file_required_password": "Este campo es requerido",
+		"file_required_tex": "Este campo es requerio de tipo string",
+		"error_user_not_found": "El usuario no existe"
+	}
+}
