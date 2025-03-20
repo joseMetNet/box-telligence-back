@@ -36,11 +36,11 @@ export const loginUser = async (data: dataLogin): Promise<IresponseRepositorySer
             WHERE tbu.email = @email;
         `;
 
-        const token = await generateJWT(user, '1h');
-        const expiresIn = await parseJwt(token);
         const result = await db?.request()
             .input('email', email)
             .query(user);
+        const token = await generateJWT(result?.recordset[0], '1h');
+        const expiresIn = await parseJwt(token);
         return {
             code: 200,
             message: { translationKey: "login.successful" },
