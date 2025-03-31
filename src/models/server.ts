@@ -9,6 +9,12 @@ import fileUpload from 'express-fileupload';
 import { swaggerDocs, swaggerUi } from '../helpers/swagger';
 //routes
 import loginRouter from "../routes/Login.Router";
+import userRouter from "../routes/User.Router";
+import companyRouter from "../routes/Company.Router";
+import boxDimensionRouter from "../routes/BoxDimension.Router";
+import weightDataRouter from "../routes/WeightData.Router";
+import packMaterialTypeRouter from "../routes/PackMaterialType.Router";
+import corrugateTypeRouter from "../routes/CorrugateType.Router";
 
 class Server {
   private app: Application;
@@ -20,7 +26,7 @@ class Server {
     this.port = config.port || '8080';
     this.path = {
       // exmple
-      example: "/boxtelligenceback",
+      url: "/boxtelligenceback",
     };
 
     // Conectar a bd
@@ -74,7 +80,13 @@ class Server {
 
   routes() {
     // example
-    this.app.use(this.path.example, loginRouter);
+    this.app.use(this.path.url, loginRouter);
+    this.app.use(this.path.url, userRouter);
+    this.app.use(this.path.url, companyRouter);
+    this.app.use(this.path.url, boxDimensionRouter);
+    this.app.use(this.path.url, weightDataRouter);
+    this.app.use(this.path.url, packMaterialTypeRouter);
+    this.app.use(this.path.url, corrugateTypeRouter);
   }
   
   listen() {

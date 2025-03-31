@@ -23,10 +23,12 @@ export const createUserInUserManagement = async (email: String, password: String
             userName: email,
             password: password
         };
-
+        // console.log('userManagementData',userManagementData);
+        // console.log('userManagementUrl',userManagementUrl);
         const userManagementResponse = await axios.post(userManagementUrl, userManagementData);
         return userManagementResponse.data.data[0].id;
     } catch (error) {
+        console.log(error);
         throw new Error("Error creating user in user management service");
     }
 };
