@@ -14,11 +14,11 @@ export interface ICompany {
     itemClearanceRuleUsed: boolean,
     clearanceAmount: number,
     multipleItemsPreCubed: boolean,
-    freightChargeMethod: string,
+    idFreightChargeMethod: number,
     dimWeightFactor: number
     idPackMaterial: number,
     packMaterialCost: number,
-    idCorrugateType: number,
+    corrugateType: string,
     corrugateCost: number,
     freightCostPerLb: number,
     createAt: Date,
