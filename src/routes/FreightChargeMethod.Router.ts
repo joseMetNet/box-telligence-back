@@ -1,21 +1,21 @@
 import { Router } from "express";
-import { getCorrugateTypeController } from "../controllers/CorrugateType.Controller";
+import { getFreightChargeMethodController } from "../controllers/FreightChargeMethod.Controller";
 
 
 
-const corrugateTypeRouter = Router();
+const freightChargeMethodRouter = Router();
 
 /**
  * @swagger
- * /corrugateType:
+ * /freightChargeMethod:
  *   get:
  *     tags:
- *       - Corrugate Type
- *     summary: Retrieve all corrugate type
- *     description: Returns a list of all corrugate type available in the system.
+ *       - Freight - Charge - Method
+ *     summary: Retrieve all freight charge method
+ *     description: Returns a list of all freight charge method available in the system.
  *     responses:
  *       200:
- *         description: Successfully retrieved corrugate type
+ *         description: Successfully retrieved freight charge method
  *         content:
  *           application/json:
  *             schema:
@@ -29,7 +29,7 @@ const corrugateTypeRouter = Router();
  *                   properties:
  *                     translationKey:
  *                       type: string
- *                       example: corrugateType.found
+ *                       example: freightChargeMethod.found
  *                 data:
  *                   type: array
  *                   items:
@@ -37,7 +37,7 @@ const corrugateTypeRouter = Router();
  *                     properties:
  *                       id:
  *                         type: integer
- *                       type:
+ *                       freight:
  *                         type: string
  *       500:
  *         description: Internal server error
@@ -50,6 +50,6 @@ const corrugateTypeRouter = Router();
  *                   type: string
  *                   example: Internal server error
  */
-corrugateTypeRouter.get("/corrugateType", getCorrugateTypeController);
+freightChargeMethodRouter.get("/freightChargeMethod", getFreightChargeMethodController);
 
-export default corrugateTypeRouter;
+export default freightChargeMethodRouter;

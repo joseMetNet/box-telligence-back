@@ -14,7 +14,7 @@ import companyRouter from "../routes/Company.Router";
 import boxDimensionRouter from "../routes/BoxDimension.Router";
 import weightDataRouter from "../routes/WeightData.Router";
 import packMaterialTypeRouter from "../routes/PackMaterialType.Router";
-import corrugateTypeRouter from "../routes/CorrugateType.Router";
+import freightChargeMethodRouter from "../routes/FreightChargeMethod.Router";
 
 class Server {
   private app: Application;
@@ -86,7 +86,7 @@ class Server {
     this.app.use(this.path.url, boxDimensionRouter);
     this.app.use(this.path.url, weightDataRouter);
     this.app.use(this.path.url, packMaterialTypeRouter);
-    this.app.use(this.path.url, corrugateTypeRouter);
+    this.app.use(this.path.url, freightChargeMethodRouter);
   }
   
   listen() {

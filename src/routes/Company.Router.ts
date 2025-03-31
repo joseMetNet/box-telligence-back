@@ -50,16 +50,16 @@ const companyRouter = Router();
  *                 type: number
  *               multipleItemsPreCubed:
  *                 type: boolean
- *               freightChargeMethod:
- *                 type: string
+ *               idFreightChargeMethod:
+ *                 type: number
  *               dimWeightFactor:
  *                 type: number
  *               idPackMaterial:
  *                 type: number
  *               packMaterialCost:
  *                 type: number
- *               idCorrugateType:
- *                 type: number
+ *               corrugateType:
+ *                 type: string
  *               corrugateCost:
  *                 type: number
  *               freightCostPerLb:
@@ -113,25 +113,25 @@ companyRouter.post("/createCompany",
         body("company", "company.required_field_text").isString().notEmpty(),
         body("location", "company.required_field_text").isString().notEmpty(),
         body("idUser", "company.required_field_text").isInt().notEmpty(),
-        body("currentBoxUsed").isInt(),
-        body("runCurrentBoxKitOnly").isBoolean(),
-        body("minimunNumBox").isInt(),
-        body("maximunNumBox").isInt(),
-        body("orderUsed").isBoolean(),
-        body("weightDataAvailable").isBoolean(),
-        body("idWeightData").isInt(),
-        body("idBoxDimension").isInt(),
-        body("assignedBoxes").isBoolean(),
-        body("itemClearanceRuleUsed").isBoolean(),
-        body("clearanceAmount").isFloat(),
-        body("multipleItemsPreCubed").isBoolean(),
-        body("freightChargeMethod").isString(),
-        body("dimWeightFactor").isInt(),
-        body("idPackMaterial").isInt(),
-        body("packMaterialCost").isFloat(),
-        body("idCorrugateType").isInt(),
-        body("corrugateCost").isFloat(),
-        body("freightCostPerLb").isFloat(),
+        body("currentBoxUsed").isInt().notEmpty(),
+        body("runCurrentBoxKitOnly").isBoolean().notEmpty(),
+        body("minimunNumBox").isInt().notEmpty(),
+        body("maximunNumBox").isInt().notEmpty(),
+        body("orderUsed").isBoolean().notEmpty(),
+        body("weightDataAvailable").isBoolean().notEmpty(),
+        body("idWeightData").isInt().notEmpty(),
+        body("idBoxDimension").isInt().notEmpty(),
+        body("assignedBoxes").isBoolean().notEmpty(),
+        body("itemClearanceRuleUsed").isBoolean().notEmpty(),
+        body("clearanceAmount").isFloat().notEmpty(),
+        body("multipleItemsPreCubed").isBoolean().notEmpty(),
+        body("idFreightChargeMethod").isInt().notEmpty(),
+        body("dimWeightFactor").isInt().notEmpty(),
+        body("idPackMaterial").isInt().notEmpty(),
+        body("packMaterialCost").isFloat().notEmpty(),
+        body("corrugateType").isString(),
+        body("corrugateCost").isFloat().notEmpty(),
+        body("freightCostPerLb").isFloat().notEmpty(),
         validateEnpoint
     ],
     createCompanyController
