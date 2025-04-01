@@ -9,7 +9,7 @@ export const getFreightChargeMethod = async (): Promise<IresponseRepositoryServi
 
         return {
             code: 200,
-            message: { translationKey: "TB_freightChargeMethod.found", translationParams: { name: "getFreightChargeMethod" } },
+            message: { translationKey: "freightChargeMethod.found", translationParams: { name: "getFreightChargeMethod" } },
             data: result?.recordset || []
         };
     } catch (err) {
