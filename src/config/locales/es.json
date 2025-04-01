@@ -18,5 +18,35 @@
 		"file_required_password": "Este campo es requerido",
 		"file_required_tex": "Este campo es requerio de tipo string",
 		"error_user_not_found": "El usuario no existe"
+	},
+	"company": {
+		"created": "Ok",
+		"error_server": "Ocurrio un error en el servidor",
+		"required_field_text": "Este campo es requerido"
+	},
+	"user": {
+		"created": "Ok",
+		"error_server": "Ocurrio un error en el servidor",
+		"required_field_text": "Este campo es requerido"
+	},
+	"boxDimension": {
+		"found": "Ok",
+		"error_server": "Ocurrio un error en el servidor"
+	},
+	"excel": {
+		"template_generated": "Ok",
+		"error_server": "Ocurrio un error en el servidor"
+	},
+	"freightChargeMethod": {
+		"found": "Ok",
+		"error_server": "Ocurrio un error en el servidor"
+	},
+	"packMaterialType": {
+		"found": "Ok",
+		"error_server": "Ocurrio un error en el servidor"
+	},
+	"weightData": {
+		"found": "Ok",
+		"error_server": "Ocurrio un error en el servidor"
 	}
 }

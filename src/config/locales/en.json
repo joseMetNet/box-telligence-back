@@ -18,5 +18,35 @@
 		"file_required_password": "this is a required field",
 		"file_required_tex": "this is a required field as string",
 		"error_user_not_found": "The user does not exist"
+	},
+	"company": {
+		"created": "Ok",
+		"error_server": "An error occurred on the server",
+		"required_field_text": "this is a required field"
+	},
+	"user": {
+		"created": "Ok",
+		"error_server": "An error occurred on the server",
+		"required_field_text": "this is a required field"
+	},
+	"boxDimension": {
+		"found": "Ok",
+		"error_server": "An error occurred on the server"
+	},
+	"excel": {
+		"template_generated": "Excel template generated",	
+		"error_server": "An error occurred on the server"
+	},
+	"freightChargeMethod": {
+		"found": "Ok",
+		"error_server": "An error occurred on the server"
+	},
+	"packMaterialType": {
+		"found": "Ok",
+		"error_server": "An error occurred on the server"
+	},
+	"weightData": {
+		"found": "Ok",
+		"error_server": "An error occurred on the server"
 	}
 }
