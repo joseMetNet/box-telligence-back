@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { downloadExcelTemplateShipmentDataFileController } from "../controllers/ShipmentDataFile.Controller";
+import { downloadExcelTemplateShipmentDataFileController, uploadExcelShipmentDataFileController } from "../controllers/ShipmentDataFile.Controller";
 
 const shipmentDataFileRouter = Router();
 
@@ -23,5 +23,68 @@ const shipmentDataFileRouter = Router();
  *         description: Error generating Excel template
  */
 shipmentDataFileRouter.get('/downloadTemplateShipmentDataFile', downloadExcelTemplateShipmentDataFileController);
+
+/**
+ * @swagger
+ * /uploadShipmentDataFile:
+ *   post:
+ *     summary: Upload Excel file with shipment data file
+ *     description: Upload an Excel file containing the shipment data. Also, associates the data with a company using `idCompany`.
+ *     tags:
+ *       - ShipmentDataFile
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *                 description: Excel file containing the shipment data.
+ *               idCompany:
+ *                 type: integer
+ *                 description: ID of the company to associate the records with.
+ *     responses:
+ *       200:
+ *         description: File uploaded and data saved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                 message:
+ *                   type: object
+ *                   properties:
+ *                     translationKey:
+ *                       type: string
+ *                     translationParams:
+ *                       type: object
+ *                       properties:
+ *                         insertedRows:
+ *                           type: integer
+ *       400:
+ *         description: Invalid file, missing file, or missing idCompany
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *       500:
+ *         description: Server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ */
+shipmentDataFileRouter.post('/uploadShipmentDataFile', uploadExcelShipmentDataFileController);
 
 export default shipmentDataFileRouter;

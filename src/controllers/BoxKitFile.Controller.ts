@@ -3,7 +3,6 @@ import * as repository from '../repository/BoxKitFile.Repository';
 import { IresponseRepositoryService } from "../interface/BoxKitFile.Interface";
 import { parseMessageI18n } from "../utils/parse-messga-i18";
 import { UploadedFile } from "express-fileupload";
-import * as XLSX from 'xlsx';
 
 export const downloadExcelTemplateBoxKitFileController: RequestHandler =  async (req, res) => {
     try {

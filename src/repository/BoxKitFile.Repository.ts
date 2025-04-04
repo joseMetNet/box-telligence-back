@@ -46,9 +46,21 @@ export const uploadExcelBoxKitFile = async (fileBuffer: Buffer, idCompany: numbe
         const transaction = new sql.Transaction(db);
         await transaction.begin();
 
+        const getOrderRequest = new sql.Request(transaction);
+        getOrderRequest.input('idCompany', sql.Int, idCompany);
+        const orderResult = await getOrderRequest.query(`
+            SELECT TOP 1 id FROM TB_Order WHERE idCompany = @idCompany ORDER BY createAt DESC;
+        `);
+
+        if (orderResult.recordset.length === 0) {
+            await transaction.rollback();
+            return { code: 404, message: { translationKey: "order.notFound", translationParams: { idCompany } } };
+        }
+
+        const idOrder = orderResult.recordset[0].id;
         const insertQuery = `
-            INSERT INTO TB_BoxKitFile (boxNumber, length, width, height, idCompany, createAt) 
-            VALUES (@boxNumber, @length, @width, @height, @idCompany, GETDATE());
+            INSERT INTO TB_BoxKitFile (boxNumber, length, width, height, idOrder, createAt) 
+            VALUES (@boxNumber, @length, @width, @height, @idOrder, GETDATE());
         `;
 
         const rowsToInsert = extractRowsFromWorksheet(worksheet);
@@ -67,7 +79,7 @@ export const uploadExcelBoxKitFile = async (fileBuffer: Buffer, idCompany: numbe
                 request.input('length', sql.Decimal(10, 2), row.length);
                 request.input('width', sql.Decimal(10, 2), row.width);
                 request.input('height', sql.Decimal(10, 2), row.height);
-                request.input('idCompany', sql.Int, idCompany);
+                request.input('idOrder', sql.Int, idOrder);
 
                 await request.query(insertQuery);
                 insertedRows++;
