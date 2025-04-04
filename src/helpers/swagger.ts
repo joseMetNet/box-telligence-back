@@ -23,6 +23,14 @@ const swaggerOptions: Options = {
                 name: 'Login',
                 description: 'Operations related to login'
             },
+            {
+                name: 'Users',
+                description: 'Operations related to users'
+            },
+            {
+                name: 'Companies',
+                description: 'Operations related to companies'
+            }
         ],
     },
     apis: ['./src/routes/*.ts', './src/controllers/*.ts'],
