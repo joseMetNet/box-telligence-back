@@ -11,7 +11,7 @@ export const createCompany = async (data: ICompany): Promise<IresponseRepository
         } = data;
 
         const db = await connectToSqlServer();
-        
+
         const insertCompanyQuery = `INSERT INTO TB_Companies (
             company, location, idUser, currentBoxUsed, runCurrentBoxKitOnly,
             minimunNumBox, maximunNumBox, orderUsed, weightDataAvailable, idWeightData, idBoxDimension, assignedBoxes,
@@ -48,17 +48,34 @@ export const createCompany = async (data: ICompany): Promise<IresponseRepository
             .input('corrugateCost', corrugateCost)
             .input('freightCostPerLb', freightCostPerLb)
             .query(insertCompanyQuery);
-        console.log(insertCompanyResult);
+
+        const createdCompany = insertCompanyResult?.recordset?.[0];
+        const idCompany = createdCompany?.id;
+
+        if (!idCompany) {
+            throw new Error("No se pudo obtener el id de la empresa creada.");
+        }
+
+        const insertOrderQuery = `
+            INSERT INTO TB_Order (idCompany, idStatus, createAt)
+            VALUES (@idCompany, @idStatus, GETDATE())
+        `;
+
+        await db?.request()
+            .input('idCompany', idCompany)
+            .input('idStatus', 1)
+            .query(insertOrderQuery);
+
         return {
             code: 200,
             message: { translationKey: "company.created", translationParams: { name: "createCompany" } },
-            data: insertCompanyResult?.recordset?.[0]
-        }    
+            data: createdCompany
+        };
     } catch (err) {
         console.log("Error creating company", err);
         return {
             code: 400,
             message: { translationKey: "company.error_server", translationParams: { name: "createCompany" } },
         };
-    }    
-}
+    }
+};

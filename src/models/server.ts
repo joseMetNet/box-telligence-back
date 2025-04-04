@@ -68,13 +68,20 @@ class Server {
     // responses
     this.app.use(morgan("dev"));
     // subir archivos
-    this.app.use(
-      fileUpload({
-        useTempFiles: true,
-        tempFileDir: "./tmp/",
-        createParentPath: true,
-      })
-    );
+    // this.app.use(
+    //   fileUpload({
+    //     limits: { fileSize: 5 * 1024 * 1024 },
+    //     useTempFiles: true,
+    //     tempFileDir: "./tmp/",
+    //     createParentPath: true,
+    //   })
+    // );
+    this.app.use(fileUpload({
+      useTempFiles: false,  // Desactiva archivos temporales
+      limits: { fileSize: 5 * 1024 * 1024 }, // 5MB de límite
+      abortOnLimit: true,
+      createParentPath: true
+  }));
     // translator handler 
     this.app.use(i18n.init);
     this.app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
