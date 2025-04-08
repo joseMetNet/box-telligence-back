@@ -22,7 +22,8 @@
 	"company": {
 		"created": "Ok",
 		"error_server": "Ocurrio un error en el servidor",
-		"required_field_text": "Este campo es requerido"
+		"required_field_text": "Este campo es requerido",
+		"found": "cliente encontrado"
 	},
 	"user": {
 		"created": "Ok",
@@ -38,7 +39,8 @@
 		"error_server": "Ocurrio un error en el servidor",
 		"error_empty_file": "El archivo no tiene datos",
 		"templateFileNotFound": "El archivo no es la plantilla BoxKitFile.xlsx con la hoja BoxKitFile",
-		"noValidRows": "No hay filas validas en el archivo"
+		"noValidRows": "No hay filas validas en el archivo",
+		"required_field_text": "Este campo es requerido"
 	},
 	"freightChargeMethod": {
 		"found": "Ok",
@@ -51,7 +53,5 @@
 	"weightData": {
 		"found": "Ok",
 		"error_server": "Ocurrio un error en el servidor"
-	},
-	"templateFileNotFound": "templateFileNotFound",
-	"The idCompany is mandatory": "The idCompany is mandatory"
+	}
 }

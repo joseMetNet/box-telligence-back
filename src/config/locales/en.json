@@ -22,7 +22,8 @@
 	"company": {
 		"created": "Ok",
 		"error_server": "An error occurred on the server",
-		"required_field_text": "this is a required field"
+		"required_field_text": "this is a required field",
+		"found": "client found"
 	},
 	"user": {
 		"created": "Ok",
@@ -38,7 +39,8 @@
 		"error_server": "An error occurred on the server",
 		"error_empty_file": "The file does not have data",
 		"templateFileNotFound": "The file is not the BoxKitFile.xlsx with the BoxKitFile sheet",
-		"noValidRows": "There are no valid rows in the file"
+		"noValidRows": "There are no valid rows in the file",
+		"required_field_text": "this is a required field"
 	},
 	"freightChargeMethod": {
 		"found": "Ok",

@@ -1,5 +1,5 @@
 import { connectToSqlServer } from "../DB/config";
-import { ICompany, IresponseRepositoryService } from "../interface/Company.Interface";
+import { ICompany, IGetCompaniesParams, IresponseRepositoryService } from "../interface/Company.Interface";
 
 export const createCompany = async (data: ICompany): Promise<IresponseRepositoryService> => {
     try {
@@ -57,13 +57,14 @@ export const createCompany = async (data: ICompany): Promise<IresponseRepository
         }
 
         const insertOrderQuery = `
-            INSERT INTO TB_Order (idCompany, idStatus, createAt)
-            VALUES (@idCompany, @idStatus, GETDATE())
+            INSERT INTO TB_Order (idCompany, idStatusData, idStatusModel, createAt)
+            VALUES (@idCompany, @idStatusData, @idStatusModel, GETDATE())
         `;
 
         await db?.request()
             .input('idCompany', idCompany)
-            .input('idStatus', 1)
+            .input('idStatusData', 1)
+            .input('idStatusModel', 1)
             .query(insertOrderQuery);
 
         return {
@@ -79,3 +80,123 @@ export const createCompany = async (data: ICompany): Promise<IresponseRepository
         };
     }
 };
+
+export const getNewCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesParams): Promise<IresponseRepositoryService> => {
+    try {
+        const db = await connectToSqlServer();
+        const offset = (page - 1) * limit;
+
+        const query = `
+            SELECT DISTINCT tbc.company, tbc.createAt, tbsd.id,
+            CASE 
+                WHEN tbsd.id = 1 THEN 0
+                WHEN tbsd.id = 2 THEN 50
+                WHEN tbsd.id = 3 THEN 100
+                ELSE NULL
+            END AS percentage,
+            tbsd.status AS statusData,
+            tbsm.status AS statusModel
+            FROM TB_Companies AS tbc 
+            LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
+            LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
+            LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
+			WHERE tbsd.id = 1
+            ORDER BY tbc.createAt DESC
+            OFFSET ${offset} ROWS
+            FETCH NEXT ${limit} ROWS ONLY;
+        `;
+
+        const countQuery = `SELECT COUNT(*) as total FROM TB_Companies AS tbc 
+            LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
+            LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
+            LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
+			WHERE tbsm.id !=  2`;
+
+        const [dataResult, countResult] = await Promise.all([
+            db?.request().query(query),
+            db?.request().query(countQuery)
+        ]);
+
+        const total = countResult?.recordset[0].total || 0;
+
+        return {
+            code: 200,
+            message: { translationKey: "company.found", translationParams: { name: "getNewCompanies" } },
+            data: {
+                companies: dataResult?.recordset || [],
+                pagination: {
+                    total,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(total / limit)
+                }
+            }
+        };
+    } catch (err) {
+        console.error("Error fetching companies:", err);
+        return {
+            code: 400,
+            message: { translationKey: "company.error_server", translationParams: { name: "getNewCompanies" } },
+        };
+    }
+}
+
+export const getCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesParams): Promise<IresponseRepositoryService> => {
+    try {
+        const db = await connectToSqlServer();
+        const offset = (page - 1) * limit;
+
+        const query = `
+            SELECT DISTINCT tbc.company, tbc.createAt, tbsd.id,
+            CASE 
+                WHEN tbsd.id = 1 THEN 0
+                WHEN tbsd.id = 2 THEN 50
+                WHEN tbsd.id = 3 THEN 100
+                ELSE NULL
+            END AS percentage,
+            tbsd.status AS statusData,
+            tbsm.status AS statusModel
+            FROM TB_Companies AS tbc 
+            LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
+            LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
+            LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
+			WHERE tbsm.id != 2 AND tbsd.id != 1
+            ORDER BY tbc.createAt DESC
+            OFFSET ${offset} ROWS
+            FETCH NEXT ${limit} ROWS ONLY;
+        `;
+
+        const countQuery = `SELECT COUNT(*) as total FROM TB_Companies AS tbc 
+            LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
+            LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
+            LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
+			WHERE tbsm.id !=  2`;
+
+        const [dataResult, countResult] = await Promise.all([
+            db?.request().query(query),
+            db?.request().query(countQuery)
+        ]);
+
+        const total = countResult?.recordset[0].total || 0;
+
+        return {
+            code: 200,
+            message: { translationKey: "company.found", translationParams: { name: "getCompanies" } },
+            data: {
+                companies: dataResult?.recordset || [],
+                pagination: {
+                    total,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(total / limit)
+                }
+            }
+        };
+    } catch (err) {
+        console.error("Error fetching companies:", err);
+        return {
+            code: 400,
+            message: { translationKey: "company.error_server", translationParams: { name: "getCompanies" } },
+        };
+    }
+}

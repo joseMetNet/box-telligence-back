@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { body } from "express-validator";
 import { validateEnpoint } from "../middlewares/validatorEnpoint";
-import { createCompanyController } from "../controllers/Company.Controller";
+import { createCompanyController, getCompaniesController, getNewCompaniesController } from "../controllers/Company.Controller";
 
 const companyRouter = Router();
 
@@ -136,5 +136,177 @@ companyRouter.post("/createCompany",
     ],
     createCompanyController
 );
+
+/**
+ * @swagger
+ * /companies:
+ *   get:
+ *     tags:
+ *       - Companies
+ *     summary: Get companies with pagination
+ *     description: Returns a paginated list of companies available in the system.
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number (optional)
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Number of results per page (optional)
+ *     responses:
+ *       200:
+ *         description: Successfully obtained companies
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: object
+ *                   properties:
+ *                     translationKey:
+ *                       type: string
+ *                       example: company.found
+ *                     translationParams:
+ *                       type: object
+ *                       properties:
+ *                         name:
+ *                           type: string
+ *                           example: getCompanies
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     companies:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           idCompany:
+ *                             type: integer
+ *                             example: 1
+ *                           name:
+ *                             type: string
+ *                             example: company XYZ
+ *                     pagination:
+ *                       type: object
+ *                       properties:
+ *                         total:
+ *                           type: integer
+ *                           example: 100
+ *                         page:
+ *                           type: integer
+ *                           example: 1
+ *                         limit:
+ *                           type: integer
+ *                           example: 10
+ *                         totalPages:
+ *                           type: integer
+ *                           example: 10
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: Internal server error
+ */
+companyRouter.get("/companies", getCompaniesController);
+
+/**
+ * @swagger
+ * /newCompanies:
+ *   get:
+ *     tags:
+ *       - Companies
+ *     summary: Get companies with pagination
+ *     description: Returns a paginated list of companies available in the system.
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number (optional)
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Number of results per page (optional)
+ *     responses:
+ *       200:
+ *         description: Successfully obtained companies
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: object
+ *                   properties:
+ *                     translationKey:
+ *                       type: string
+ *                       example: company.found
+ *                     translationParams:
+ *                       type: object
+ *                       properties:
+ *                         name:
+ *                           type: string
+ *                           example: getCompanies
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     companies:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           idCompany:
+ *                             type: integer
+ *                             example: 1
+ *                           name:
+ *                             type: string
+ *                             example: company XYZ
+ *                     pagination:
+ *                       type: object
+ *                       properties:
+ *                         total:
+ *                           type: integer
+ *                           example: 100
+ *                         page:
+ *                           type: integer
+ *                           example: 1
+ *                         limit:
+ *                           type: integer
+ *                           example: 10
+ *                         totalPages:
+ *                           type: integer
+ *                           example: 10
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: Internal server error
+ */
+companyRouter.get("/newCompanies", getNewCompaniesController);
 
 export default companyRouter;

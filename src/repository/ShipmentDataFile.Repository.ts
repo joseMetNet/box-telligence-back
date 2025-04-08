@@ -82,6 +82,12 @@ export const uploadExcelShipmentDataFile = async (fileBuffer: Buffer, idCompany:
         }
 
         const idOrder = orderResult.recordset[0].id;
+                const updateStatusRequest = new sql.Request(transaction);
+                      updateStatusRequest.input('idOrder', sql.Int, idOrder);
+                      updateStatusRequest.input('idStatusData', sql.Int, 3);
+                    await updateStatusRequest.query(`
+                        UPDATE TB_Order SET idStatusData = @idStatusData WHERE id = @idOrder;
+                    `);
         const insertQuery = `
             INSERT INTO TB_ShipmentDataFile (orderId, item1Length, item1Width, item1Height, item1Weight,
             item2Length, item2Width, item2Height, item2Weight,
