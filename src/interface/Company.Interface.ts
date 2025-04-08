@@ -35,3 +35,8 @@ export interface IresponseRepositoryService {
     message:  ImessageComposed | string,
     data?: any
 }
+
+export interface IGetCompaniesParams {
+    page?: number;
+    limit?: number;
+}

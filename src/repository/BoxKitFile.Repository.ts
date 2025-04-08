@@ -58,6 +58,12 @@ export const uploadExcelBoxKitFile = async (fileBuffer: Buffer, idCompany: numbe
         }
 
         const idOrder = orderResult.recordset[0].id;
+        const updateStatusRequest = new sql.Request(transaction);
+              updateStatusRequest.input('idOrder', sql.Int, idOrder);
+              updateStatusRequest.input('idStatusData', sql.Int, 2);
+            await updateStatusRequest.query(`
+                UPDATE TB_Order SET idStatusData = @idStatusData WHERE id = @idOrder;
+            `);
         const insertQuery = `
             INSERT INTO TB_BoxKitFile (boxNumber, length, width, height, idOrder, createAt) 
             VALUES (@boxNumber, @length, @width, @height, @idOrder, GETDATE());
@@ -92,7 +98,7 @@ export const uploadExcelBoxKitFile = async (fileBuffer: Buffer, idCompany: numbe
             await transaction.commit();
             return {
                 code: 200,
-                message: { translationKey: "excel.template_generated", translationParams: { name: "uploadExcelBoxKitFile" } }
+                message: { translationKey: "excel.template_generated", translationParams: { name: "uploadExcelBoxKitFile" } },
             };
         } else {
             await transaction.rollback();

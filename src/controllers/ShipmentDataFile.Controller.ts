@@ -22,18 +22,18 @@ export const downloadExcelTemplateShipmentDataFileController: RequestHandler =  
 export const uploadExcelShipmentDataFileController: RequestHandler = async (req, res) => {
     try {
         if (!req.files || !req.files.file) {
-            return res.status(400).json({ message: parseMessageI18n("templateFileNotFound", req) });
+            return res.status(400).json({ message: parseMessageI18n("excel.templateFileNotFound", req) });
         }
 
         const file = req.files.file as UploadedFile;
 
         if (!file.data || file.data.length === 0) {
-            return res.status(400).json({ message: parseMessageI18n("error_empty_file", req) });
+            return res.status(400).json({ message: parseMessageI18n("excel.error_empty_file", req) });
         }
 
         const { idCompany } = req.body;
         if (!idCompany) {
-            return res.status(400).json(parseMessageI18n("The idCompany is mandatory", req) );
+            return res.status(400).json(parseMessageI18n("excel.required_field_text", req) );
         }
 
         const response = await repository.uploadExcelShipmentDataFile(file.data, Number(idCompany));
