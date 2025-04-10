@@ -28,6 +28,20 @@ export const getNewCompaniesController: RequestHandler = async (req, res) => {
     }
 };
 
+export const getOlderCompaniesController: RequestHandler = async (req, res) => {
+    try {
+        const page = parseInt(req.query.page as string) || 1;
+        const limit = parseInt(req.query.limit as string) || 10;
+        const safePage = page > 0 ? page : 1;
+        const safeLimit = limit > 0 ? limit : 10;
+        const { code, message, ...resto }: IresponseRepositoryService = await repository.getOlderCompanies({page: safePage, limit: safeLimit});
+        res.status(code).json({message: parseMessageI18n(message, req), ...resto });
+    } catch (err) {
+        console.log(err);
+        res.status(500).json({ message: parseMessageI18n("error_server", req) });
+    }
+};
+
 export const getCompaniesController: RequestHandler = async (req, res) => {
     try {
         const page = parseInt(req.query.page as string) || 1;
