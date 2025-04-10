@@ -110,7 +110,7 @@ export const getNewCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesPar
             LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
             LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
             LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
-			WHERE tbsm.id !=  2`;
+			WHERE tbsd.id = 1`;
 
         const [dataResult, countResult] = await Promise.all([
             db?.request().query(query),
@@ -141,6 +141,69 @@ export const getNewCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesPar
     }
 }
 
+export const getOlderCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesParams): Promise<IresponseRepositoryService> => {
+    try {
+        const db = await connectToSqlServer();
+        const offset = (page - 1) * limit;
+
+        const query = `
+            SELECT DISTINCT tbc.company, tbc.currentBoxUsed, tbc.createAt, tbsd.id,
+            CASE 
+                WHEN tbsd.id = 1 THEN 0
+                WHEN tbsd.id = 2 THEN 50
+                WHEN tbsd.id = 3 THEN 100
+                ELSE NULL
+            END AS percentage,
+            tbsd.status AS statusData,
+            tbsm.status AS statusModel
+            FROM TB_Companies AS tbc 
+            LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
+            LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
+            LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
+            WHERE tbc.createAt < DATEADD(MONTH, -6, GETDATE())
+            ORDER BY tbc.createAt DESC
+            OFFSET ${offset} ROWS
+            FETCH NEXT ${limit} ROWS ONLY;
+        `;
+
+        const countQuery = `
+            SELECT COUNT(*) as total 
+            FROM TB_Companies AS tbc 
+            LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
+            LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
+            LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
+            WHERE tbc.createAt < DATEADD(MONTH, -6, GETDATE())
+        `;
+
+        const [dataResult, countResult] = await Promise.all([
+            db?.request().query(query),
+            db?.request().query(countQuery)
+        ]);
+
+        const total = countResult?.recordset[0].total || 0;
+
+        return {
+            code: 200,
+            message: { translationKey: "company.found", translationParams: { name: "getOlderCompanies" } },
+            data: {
+                companies: dataResult?.recordset || [],
+                pagination: {
+                    total,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(total / limit)
+                }
+            }
+        };
+    } catch (err) {
+        console.error("Error fetching older companies:", err);
+        return {
+            code: 400,
+            message: { translationKey: "company.error_server", translationParams: { name: "getOlderCompanies" } },
+        };
+    }
+};
+
 export const getCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesParams): Promise<IresponseRepositoryService> => {
     try {
         const db = await connectToSqlServer();
@@ -170,7 +233,7 @@ export const getCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesParams
             LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
             LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
             LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
-			WHERE tbsm.id !=  2`;
+			WHERE tbsm.id !=  2 AND tbsd.id != 1`;
 
         const [dataResult, countResult] = await Promise.all([
             db?.request().query(query),
