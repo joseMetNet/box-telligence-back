@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { body } from "express-validator";
 import { validateEnpoint } from "../middlewares/validatorEnpoint";
-import { createCompanyController, getCompaniesController, getNewCompaniesController, getOlderCompaniesController } from "../controllers/Company.Controller";
+import { createCompanyController, deleteFileCompanyController, getCompaniesController, getCompanyByIdController, getCompanyFileDetailsByDate, getDataFilesCompaniesByIdController, getNewCompaniesController, getOlderCompaniesController } from "../controllers/Company.Controller";
 
 const companyRouter = Router();
 
@@ -394,5 +394,282 @@ companyRouter.get("/newCompanies", getNewCompaniesController);
  *                   example: Internal server error
  */
 companyRouter.get("/olderCompanies", getOlderCompaniesController);
+
+/**
+ * @swagger
+ * /companies/{id}:
+ *   get:
+ *     tags:
+ *       - Companies
+ *     summary: Get a company by ID
+ *     description: Returns a single company based on the provided ID.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID of the company to retrieve
+ *     responses:
+ *       200:
+ *         description: Successfully found company
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: object
+ *                   properties:
+ *                     translationKey:
+ *                       type: string
+ *                     translationParams:
+ *                       type: object
+ *                       properties:
+ *                         name:
+ *                           type: string
+ *       404:
+ *         description: Company not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 404
+ *                 message:
+ *                   type: object
+ *                   properties:
+ *                     translationKey:
+ *                       type: string
+ *                     translationParams:
+ *                       type: object
+ *                       properties:
+ *                         name:
+ *                           type: string
+ *       400:
+ *         description: Bad request or server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 400
+ *                 message:
+ *                   type: object
+ *                   properties:
+ *                     translationKey:
+ *                       type: string
+ *                     translationParams:
+ *                       type: object
+ *                       properties:
+ *                         name:
+ *                           type: string
+ */
+companyRouter.get("/companies/:id", getCompanyByIdController);
+
+/**
+ * @swagger
+ * /fileDataCompanies/{id}:
+ *   get:
+ *     tags:
+ *       - Companies
+ *     summary: Get a files data company by ID
+ *     description: Returns a data loaded of company based on the provided ID.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID of the company to retrieve
+ *     responses:
+ *       200:
+ *         description: Successfully found company
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: object
+ *                   properties:
+ *                     translationKey:
+ *                       type: string
+ *                     translationParams:
+ *                       type: object
+ *                       properties:
+ *                         name:
+ *                           type: string
+ *       404:
+ *         description: Company not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 404
+ *                 message:
+ *                   type: object
+ *                   properties:
+ *                     translationKey:
+ *                       type: string
+ *                     translationParams:
+ *                       type: object
+ *                       properties:
+ *                         name:
+ *                           type: string
+ *       400:
+ *         description: Bad request or server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 400
+ *                 message:
+ *                   type: object
+ *                   properties:
+ *                     translationKey:
+ *                       type: string
+ *                     translationParams:
+ *                       type: object
+ *                       properties:
+ *                         name:
+ *                           type: string
+ */
+companyRouter.get("/fileDataCompanies/:id", getDataFilesCompaniesByIdController);
+
+
+/**
+ * @swagger
+ * /file-details:
+ *   get:
+ *     tags:
+ *       - Companies
+ *     summary: Get file details by type and date with pagination
+ *     description: Returns details for a specific company file with optional pagination.
+ *     parameters:
+ *       - in: query
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: fileType
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [Box Kit File, Shipment Data File]
+ *       - in: query
+ *         name: uploadDate
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - in: query
+ *         name: page
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         required: false
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *     responses:
+ *       200:
+ *         description: File details with pagination
+ *       204:
+ *         description: No data found
+ *       400:
+ *         description: Bad request or invalid file type
+ *       500:
+ *         description: Internal server error
+ */
+companyRouter.get("/file-details", getCompanyFileDetailsByDate);
+
+/**
+ * @swagger
+ * /file-company/{id}:
+ *   delete:
+ *     tags:
+ *       - Companies
+ *     summary: Delete file for a company
+ *     description: Deletes a file (Box Kit File or Shipment Data File) associated with a company based on its ID.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID of the file to delete (related to idOrder)
+ *       - in: query
+ *         name: fileType
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [Box Kit File, Shipment Data File]
+ *         description: Type of file to delete
+ *     responses:
+ *       200:
+ *         description: File successfully deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                   example: 200
+ *                 message:
+ *                   type: object
+ *                   properties:
+ *                     translationKey:
+ *                       type: string
+ *                       example: company.file_deleted
+ *                     translationParams:
+ *                       type: object
+ *                       properties:
+ *                         name:
+ *                           type: string
+ *                           example: deleteFileCompany
+ *       400:
+ *         description: Bad request due to invalid input
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: Invalid ID or file type
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: Internal server error
+ */
+companyRouter.delete("/file-company/:id", deleteFileCompanyController);
 
 export default companyRouter;

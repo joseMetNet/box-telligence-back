@@ -20,10 +20,15 @@
 		"error_user_not_found": "El usuario no existe"
 	},
 	"company": {
+		"successful": "Ok",
 		"created": "Ok",
 		"error_server": "Ocurrio un error en el servidor",
 		"required_field_text": "Este campo es requerido",
-		"found": "cliente encontrado"
+		"found": "cliente encontrado",
+		"emptyResponse": "No se encontraron clientes",
+		"notFound": "No se encontro el cliente",
+		"invalid_file_type": "tipo de archivo invalido",
+		"invalid_id": "El id no es valido"
 	},
 	"user": {
 		"created": "Ok",
@@ -53,5 +58,9 @@
 	"weightData": {
 		"found": "Ok",
 		"error_server": "Ocurrio un error en el servidor"
+	},
+	"attributeData": {
+		"error_creating": "Ocurrio un error al crear",
+		"created": "Ok"
 	}
 }

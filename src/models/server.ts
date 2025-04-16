@@ -17,6 +17,7 @@ import packMaterialTypeRouter from "../routes/PackMaterialType.Router";
 import freightChargeMethodRouter from "../routes/FreightChargeMethod.Router";
 import boxkitFileRouter from "../routes/BoxKitFile.Router";
 import shipmentDataFileRouter from "../routes/ShipmentDataFile.Router";
+import attributeDataRouter from "../routes/AttributeData.Router";
 
 class Server {
   private app: Application;
@@ -98,6 +99,7 @@ class Server {
     this.app.use(this.path.url, freightChargeMethodRouter);
     this.app.use(this.path.url, boxkitFileRouter);
     this.app.use(this.path.url, shipmentDataFileRouter);
+    this.app.use(this.path.url, attributeDataRouter)
   }
   
   listen() {
