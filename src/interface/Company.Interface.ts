@@ -21,6 +21,8 @@ export interface ICompany {
     corrugateType: string,
     corrugateCost: number,
     freightCostPerLb: number,
+    idOrder?: number,
+    idCompany?: number,
     createAt: Date,
     updateAt: Date
 }

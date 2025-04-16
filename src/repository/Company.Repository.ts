@@ -3,75 +3,35 @@ import { ICompany, IGetCompaniesParams, IresponseRepositoryService } from "../in
 
 export const createCompany = async (data: ICompany): Promise<IresponseRepositoryService> => {
     try {
-        const {
-            company, location, idUser, currentBoxUsed, runCurrentBoxKitOnly,
-            minimunNumBox, maximunNumBox, orderUsed, weightDataAvailable, idWeightData, idBoxDimension, assignedBoxes,
-            itemClearanceRuleUsed, clearanceAmount, multipleItemsPreCubed, idFreightChargeMethod,
-            dimWeightFactor, idPackMaterial, packMaterialCost, corrugateType, corrugateCost, freightCostPerLb
-        } = data;
-
+        const { company, location, idUser } = data;
         const db = await connectToSqlServer();
 
         const insertCompanyQuery = `INSERT INTO TB_Companies (
-            company, location, idUser, currentBoxUsed, runCurrentBoxKitOnly,
-            minimunNumBox, maximunNumBox, orderUsed, weightDataAvailable, idWeightData, idBoxDimension, assignedBoxes,
-            itemClearanceRuleUsed, clearanceAmount, multipleItemsPreCubed, idFreightChargeMethod,
-            dimWeightFactor, idPackMaterial, packMaterialCost, corrugateType, corrugateCost, freightCostPerLb, createAt
-        ) OUTPUT INSERTED.* VALUES (
-            @company, @location, @idUser, @currentBoxUsed, @runCurrentBoxKitOnly,
-            @minimunNumBox, @maximunNumBox, @orderUsed, @weightDataAvailable, @idWeightData, @idBoxDimension, @assignedBoxes,
-            @itemClearanceRuleUsed, @clearanceAmount, @multipleItemsPreCubed, @idFreightChargeMethod,
-            @dimWeightFactor, @idPackMaterial, @packMaterialCost, @corrugateType, @corrugateCost, @freightCostPerLb, GETDATE()
-        )`;
+            company, location, idUser) OUTPUT INSERTED.* VALUES (
+            @company, @location, @idUser)`;
 
         const insertCompanyResult = await db?.request()
             .input('company', company)
             .input('location', location)
             .input('idUser', idUser)
-            .input('currentBoxUsed', currentBoxUsed)
-            .input('runCurrentBoxKitOnly', runCurrentBoxKitOnly)
-            .input('minimunNumBox', minimunNumBox)
-            .input('maximunNumBox', maximunNumBox)
-            .input('orderUsed', orderUsed)
-            .input('weightDataAvailable', weightDataAvailable)
-            .input('idWeightData', idWeightData)
-            .input('idBoxDimension', idBoxDimension)
-            .input('assignedBoxes', assignedBoxes)
-            .input('itemClearanceRuleUsed', itemClearanceRuleUsed)
-            .input('clearanceAmount', clearanceAmount)
-            .input('multipleItemsPreCubed', multipleItemsPreCubed)
-            .input('idFreightChargeMethod', idFreightChargeMethod)
-            .input('dimWeightFactor', dimWeightFactor)
-            .input('idPackMaterial', idPackMaterial)
-            .input('packMaterialCost', packMaterialCost)
-            .input('corrugateType', corrugateType || null)
-            .input('corrugateCost', corrugateCost)
-            .input('freightCostPerLb', freightCostPerLb)
             .query(insertCompanyQuery);
 
         const createdCompany = insertCompanyResult?.recordset?.[0];
         const idCompany = createdCompany?.id;
 
         if (!idCompany) {
-            throw new Error("No se pudo obtener el id de la empresa creada.");
+            throw new Error("Could not retrieve the ID of the created company.");
         }
 
-        const insertOrderQuery = `
-            INSERT INTO TB_Order (idCompany, idStatusData, idStatusModel, createAt)
-            VALUES (@idCompany, @idStatusData, @idStatusModel, GETDATE())
-        `;
-
-        await db?.request()
-            .input('idCompany', idCompany)
-            .input('idStatusData', 1)
-            .input('idStatusModel', 1)
-            .query(insertOrderQuery);
+        const idOrder = await createOrder(db, idCompany);
+        await createAttributeDataInternal(db, data, idOrder, idCompany);
 
         return {
             code: 200,
             message: { translationKey: "company.created", translationParams: { name: "createCompany" } },
             data: createdCompany
         };
+
     } catch (err) {
         console.log("Error creating company", err);
         return {
@@ -87,30 +47,50 @@ export const getNewCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesPar
         const offset = (page - 1) * limit;
 
         const query = `
-            SELECT DISTINCT tbc.company, tbc.createAt, tbsd.id,
-            CASE 
-                WHEN tbsd.id = 1 THEN 0
-                WHEN tbsd.id = 2 THEN 50
-                WHEN tbsd.id = 3 THEN 100
-                ELSE NULL
-            END AS percentage,
-            tbsd.status AS statusData,
-            tbsm.status AS statusModel
-            FROM TB_Companies AS tbc 
-            LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
-            LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
-            LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
-			WHERE tbsd.id = 1
-            ORDER BY tbc.createAt DESC
+            WITH OrderedData AS (
+                SELECT 
+                    tbc.id,
+                    tbc.company,
+                    tbo.createAt,
+                    tbsd.id AS statusDataId,
+                    CASE 
+                        WHEN tbsd.id = 1 THEN 0
+                        WHEN tbsd.id = 2 THEN 50
+                        WHEN tbsd.id = 3 THEN 100
+                        ELSE NULL
+                    END AS percentage,
+                    tbsd.status AS statusData,
+                    tbsm.status AS statusModel,
+                    ROW_NUMBER() OVER (PARTITION BY tbc.id ORDER BY tbo.createAt DESC) AS rn
+                FROM TB_Companies AS tbc 
+                LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
+                LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
+                LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
+                WHERE tbsd.id = 1 AND tbo.createAt > DATEADD(MONTH, -6, GETDATE())
+            )
+            SELECT 
+                id, company, createAt, percentage, statusData, statusModel
+            FROM OrderedData
+            WHERE rn = 1
+            ORDER BY createAt DESC
             OFFSET ${offset} ROWS
             FETCH NEXT ${limit} ROWS ONLY;
         `;
 
-        const countQuery = `SELECT COUNT(*) as total FROM TB_Companies AS tbc 
-            LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
-            LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
-            LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
-			WHERE tbsd.id = 1`;
+        const countQuery = `
+            WITH OrderedData AS (
+                SELECT 
+                    tbc.id,
+                    ROW_NUMBER() OVER (PARTITION BY tbc.id ORDER BY tbo.createAt DESC) AS rn
+                FROM TB_Companies AS tbc 
+                LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
+                LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
+                WHERE tbsd.id = 1 AND tbo.createAt > DATEADD(MONTH, -6, GETDATE())
+            )
+            SELECT COUNT(*) as total
+            FROM OrderedData
+            WHERE rn = 1;
+        `;
 
         const [dataResult, countResult] = await Promise.all([
             db?.request().query(query),
@@ -139,7 +119,7 @@ export const getNewCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesPar
             message: { translationKey: "company.error_server", translationParams: { name: "getNewCompanies" } },
         };
     }
-}
+};
 
 export const getOlderCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesParams): Promise<IresponseRepositoryService> => {
     try {
@@ -147,7 +127,7 @@ export const getOlderCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesP
         const offset = (page - 1) * limit;
 
         const query = `
-            SELECT DISTINCT tbc.company, tbc.currentBoxUsed, tbc.createAt, tbsd.id,
+            SELECT DISTINCT tbc.id, tbc.company, tba.currentBoxUsed, tba.createAt,
             CASE 
                 WHEN tbsd.id = 1 THEN 0
                 WHEN tbsd.id = 2 THEN 50
@@ -156,23 +136,25 @@ export const getOlderCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesP
             END AS percentage,
             tbsd.status AS statusData,
             tbsm.status AS statusModel
-            FROM TB_Companies AS tbc 
+            FROM TB_Companies AS tbc  
             LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
+            LEFT JOIN TB_AttributeData AS tba ON tba.idOrder = tbo.id
             LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
             LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
-            WHERE tbc.createAt < DATEADD(MONTH, -6, GETDATE())
-            ORDER BY tbc.createAt DESC
+            WHERE tba.createAt < DATEADD(MONTH, -6, GETDATE())
+            ORDER BY tba.createAt DESC
             OFFSET ${offset} ROWS
             FETCH NEXT ${limit} ROWS ONLY;
         `;
 
         const countQuery = `
             SELECT COUNT(*) as total 
-            FROM TB_Companies AS tbc 
+            FROM TB_Companies AS tbc  
             LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
+            LEFT JOIN TB_AttributeData AS tba ON tba.idOrder = tbo.id
             LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
             LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
-            WHERE tbc.createAt < DATEADD(MONTH, -6, GETDATE())
+            WHERE tba.createAt < DATEADD(MONTH, -6, GETDATE())
         `;
 
         const [dataResult, countResult] = await Promise.all([
@@ -210,7 +192,7 @@ export const getCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesParams
         const offset = (page - 1) * limit;
 
         const query = `
-            SELECT DISTINCT tbc.company, tbc.createAt, tbsd.id,
+            SELECT DISTINCT tbc.id, tbc.company, tbo.createAt,
             CASE 
                 WHEN tbsd.id = 1 THEN 0
                 WHEN tbsd.id = 2 THEN 50
@@ -223,8 +205,8 @@ export const getCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesParams
             LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
             LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
             LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
-			WHERE tbsm.id != 2 AND tbsd.id != 1
-            ORDER BY tbc.createAt DESC
+            WHERE tbsm.id != 2 AND tbsd.id != 1 AND tbo.createAt > DATEADD(MONTH, -6, GETDATE())
+            ORDER BY tbo.createAt DESC
             OFFSET ${offset} ROWS
             FETCH NEXT ${limit} ROWS ONLY;
         `;
@@ -233,7 +215,7 @@ export const getCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesParams
             LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
             LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
             LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
-			WHERE tbsm.id !=  2 AND tbsd.id != 1`;
+            WHERE tbsm.id != 2 AND tbsd.id != 1 AND tbo.createAt > DATEADD(MONTH, -6, GETDATE())`;
 
         const [dataResult, countResult] = await Promise.all([
             db?.request().query(query),
@@ -263,3 +245,387 @@ export const getCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesParams
         };
     }
 }
+
+export const getCompaniesById = async (data: { id: number }): Promise<IresponseRepositoryService> => {
+    try {
+        const id = data.id;
+
+        const db = await connectToSqlServer();
+
+        const checkQuery = `SELECT COUNT(*) as total FROM TB_Companies WHERE id = @id`;
+        const checkResult = await db?.request()
+            .input('id', id)
+            .query(checkQuery);
+
+        if (!checkResult || checkResult.recordset[0].total === 0) {
+            return {
+                code: 404,
+                message: { translationKey: "company.emptyResponse", translationParams: { name: "getCompaniesById" } },
+            };
+        }
+
+        const query = `SELECT * FROM TB_Companies WHERE id = @id`;
+        const result = await db?.request()
+            .input('id', id)
+            .query(query);
+
+        const company = result?.recordset;
+
+        if (company && company.length > 0) {
+            return {
+                code: 200,
+                message: { translationKey: "company.successful", translationParams: { name: "getCompaniesById" } },
+                data: company
+            };
+        } else {
+            return {
+                code: 204,
+                message: { translationKey: "company.emptyResponse", translationParams: { name: "getCompaniesById" } }
+            };
+        }
+
+    } catch (err) {
+        console.error("Error fetching company by ID:", err);
+        return {
+            code: 400,
+            message: { translationKey: "companies.error_server", translationParams: { name: "getCompaniesById" } },
+        };
+    }
+};
+
+export const getDataFilesCompaniesById = async (data: { id: number }): Promise<IresponseRepositoryService> => {
+    try {
+        const companyId = data.id;
+
+        const db = await connectToSqlServer();
+
+        const checkQuery = `SELECT COUNT(*) as total FROM TB_Companies WHERE id = @id`;
+        const checkResult = await db?.request()
+            .input('id', companyId)
+            .query(checkQuery);
+
+        if (!checkResult || checkResult.recordset[0].total === 0) {
+            return {
+                code: 404,
+                message: { translationKey: "company.emptyResponse", translationParams: { name: "getDataFilesCompaniesById" } },
+            };
+        }
+
+        const query = `
+            SELECT DISTINCT
+                tbo.id,
+                DATENAME(MONTH, bkf.createAt) + ' ' +
+                CAST(DAY(bkf.createAt) AS VARCHAR) +
+                CASE 
+                    WHEN DAY(bkf.createAt) IN (11,12,13) THEN 'th'
+                    WHEN RIGHT(CAST(DAY(bkf.createAt) AS VARCHAR), 1) = '1' THEN 'st'
+                    WHEN RIGHT(CAST(DAY(bkf.createAt) AS VARCHAR), 1) = '2' THEN 'nd'
+                    WHEN RIGHT(CAST(DAY(bkf.createAt) AS VARCHAR), 1) = '3' THEN 'rd'
+                    ELSE 'th'
+                END AS uploadDate,
+                'Box Kit File' AS fileType
+            FROM TB_Companies c
+            LEFT JOIN TB_Order tbo ON tbo.idCompany = c.id
+            LEFT JOIN TB_BoxKitFile bkf ON bkf.idOrder = tbo.id
+            WHERE c.id = @id
+            UNION
+            SELECT
+                tbo.id, 
+                DATENAME(MONTH, sdf.createAt) + ' ' +
+                CAST(DAY(sdf.createAt) AS VARCHAR) +
+                CASE 
+                    WHEN DAY(sdf.createAt) IN (11,12,13) THEN 'th'
+                    WHEN RIGHT(CAST(DAY(sdf.createAt) AS VARCHAR), 1) = '1' THEN 'st'
+                    WHEN RIGHT(CAST(DAY(sdf.createAt) AS VARCHAR), 1) = '2' THEN 'nd'
+                    WHEN RIGHT(CAST(DAY(sdf.createAt) AS VARCHAR), 1) = '3' THEN 'rd'
+                    ELSE 'th'
+                END AS uploadDate,
+                'Shipment Data File' AS fileType
+            FROM TB_Companies c
+            LEFT JOIN TB_Order tbo ON tbo.idCompany = c.id
+            LEFT JOIN TB_ShipmentDataFile sdf ON sdf.idOrder = tbo.id
+            WHERE c.id = @id
+            ORDER BY uploadDate DESC;
+        `;
+
+        const result = await db?.request()
+            .input('id', companyId)
+            .query(query);
+
+        const files = result?.recordset;
+
+        if (files && files.length > 0) {
+            return {
+                code: 200,
+                message: { translationKey: "company.successful", translationParams: { name: "getDataFilesCompaniesById" } },
+                data: files
+            };
+        } else {
+            return {
+                code: 204,
+                message: { translationKey: "company.emptyResponse", translationParams: { name: "getDataFilesCompaniesById" } }
+            };
+        }
+
+    } catch (err) {
+        console.error("Error fetching company file data by ID:", err);
+        return {
+            code: 400,
+            message: { translationKey: "company.error_server", translationParams: { name: "getDataFilesCompaniesById" } },
+        };
+    }
+};
+
+export const getCompanyFileDetailsByDate = async (data: { id: number, fileType: string | "Box Kit File" | "Shipment Data File", uploadDate: string, page?: number, limit?: number }): Promise<IresponseRepositoryService> => {
+    try {
+        const { id, fileType, uploadDate, page = 1, limit = 10 } = data;
+        const db = await connectToSqlServer();
+        const offset = (page - 1) * limit;
+
+        let query = "";
+        let countQuery = "";
+
+        if (fileType === "Box Kit File") {
+            query = `
+                SELECT bkf.*
+                FROM TB_Companies c
+                LEFT JOIN TB_Order tbo ON tbo.idCompany = c.id
+                LEFT JOIN TB_BoxKitFile bkf ON bkf.idOrder = tbo.id
+                WHERE c.id = @id AND CAST(bkf.createAt AS DATE) = @uploadDate
+                ORDER BY bkf.createAt DESC
+                OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;
+            `;
+
+            countQuery = `
+                SELECT COUNT(*) AS total
+                FROM TB_Companies c
+                LEFT JOIN TB_Order tbo ON tbo.idCompany = c.id
+                LEFT JOIN TB_BoxKitFile bkf ON bkf.idOrder = tbo.id
+                WHERE c.id = @id AND CAST(bkf.createAt AS DATE) = @uploadDate;
+            `;
+        } else if (fileType === "Shipment Data File") {
+            query = `
+                SELECT sdf.*
+                FROM TB_Companies c
+                LEFT JOIN TB_Order tbo ON tbo.idCompany = c.id
+                LEFT JOIN TB_ShipmentDataFile sdf ON sdf.idOrder = tbo.id
+                WHERE c.id = @id AND CAST(sdf.createAt AS DATE) = @uploadDate
+                ORDER BY sdf.createAt DESC
+                OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;
+            `;
+
+            countQuery = `
+                SELECT COUNT(*) AS total
+                FROM TB_Companies c
+                LEFT JOIN TB_Order tbo ON tbo.idCompany = c.id
+                LEFT JOIN TB_ShipmentDataFile sdf ON sdf.idOrder = tbo.id
+                WHERE c.id = @id AND CAST(sdf.createAt AS DATE) = @uploadDate;
+            `;
+        } else {
+            return {
+                code: 400,
+                message: { translationKey: "company.invalid_file_type", translationParams: { name: "getCompanyFileDetailsByDate" } },
+            };
+        }
+
+        const [dataResult, countResult] = await Promise.all([
+            db?.request()
+                .input('id', id)
+                .input('uploadDate', uploadDate)
+                .input('offset', offset)
+                .input('limit', limit)
+                .query(query),
+            db?.request()
+                .input('id', id)
+                .input('uploadDate', uploadDate)
+                .query(countQuery)
+        ]);
+
+        const dataFound = dataResult?.recordset || [];
+        const total = countResult?.recordset[0]?.total || 0;
+
+        if (dataFound.length > 0) {
+            return {
+                code: 200,
+                message: { translationKey: "company.successful", translationParams: { name: "getCompanyFileDetailsByDate" } },
+                data: {
+                    results: dataFound,
+                    pagination: {
+                        total,
+                        page,
+                        limit,
+                        totalPages: Math.ceil(total / limit)
+                    }
+                }
+            };
+        } else {
+            return {
+                code: 204,
+                message: { translationKey: "company.emptyResponse", translationParams: { name: "getCompanyFileDetailsByDate" } }
+            };
+        }
+
+    } catch (error) {
+        console.error("Error getting specific company file data:", error);
+        return {
+            code: 400,
+            message: { translationKey: "company.error_server", translationParams: { name: "getCompanyFileDetailsByDate" } }
+        };
+    }
+};
+
+export const deleteFileCompany = async (data: { id: number, fileType: string | "Box Kit File" | "Shipment Data File" }): Promise<IresponseRepositoryService> => {
+    try {
+        const { id, fileType } = data;
+        const db = await connectToSqlServer();
+
+        let query = "";
+
+        if (fileType === "Box Kit File") {
+            query = `DELETE FROM TB_BoxKitFile WHERE idOrder = @id`;
+        } else if (fileType === "Shipment Data File") {
+            query = `DELETE FROM TB_ShipmentDataFile WHERE idOrder = @id`;
+        } else {
+            return {
+                code: 400,
+                message: { translationKey: "company.invalid_file_type", translationParams: { name: "deleteFileCompany" } },
+            };
+        }
+
+        const result = await db?.request()
+            .input('id', id)
+            .query(query);
+
+        const rowsAffected = result?.rowsAffected?.[0] || 0;
+
+        if (rowsAffected > 0) {
+            return {
+                code: 200,
+                message: { translationKey: "company.successful", translationParams: { name: "deleteFileCompany" } },
+            };
+        } else {
+            return {
+                code: 404,
+                message: { translationKey: "company.notFound", translationParams: { name: "deleteFileCompany" } },
+            };
+        }
+
+    } catch (err) {
+        console.error("Error deleting file company:", err);
+        return {
+            code: 400,
+            message: { translationKey: "company.error_server", translationParams: { name: "deleteFileCompany" } },
+        };
+    }
+};
+
+const createOrder = async (db: any, idCompany: number): Promise<number> => {
+    const insertOrderQuery = `
+        INSERT INTO TB_Order (idCompany, idStatusData, idStatusModel, createAt)
+        OUTPUT INSERTED.id
+        VALUES (@idCompany, @idStatusData, @idStatusModel, GETDATE())
+    `;
+
+    const insertOrderResult = await db.request()
+        .input('idCompany', idCompany)
+        .input('idStatusData', 1)
+        .input('idStatusModel', 1)
+        .query(insertOrderQuery);
+
+    const idOrder = insertOrderResult?.recordset?.[0]?.id;
+
+    if (!idOrder) {
+        throw new Error("Could not retrieve the ID of the created order.");
+    }
+
+    return idOrder;
+};
+
+export const createAttributeData = async (data: ICompany): Promise<IresponseRepositoryService> => {
+    try {
+        const db = await connectToSqlServer();
+        const { idOrder, idCompany } = data;
+
+        await createAttributeDataInternal(db, data, idOrder, idCompany);
+
+        return {
+            code: 200,
+            message: { translationKey: "attributeData.created", translationParams: { name: "createAttributeData" } },
+        };
+    } catch (error) {
+        console.error("Error en createAttributeData repository:", error);
+        return {
+            code: 400,
+            message: { translationKey: "attributeData.error_creating", translationParams: { name: "createAttributeData" } },
+        };
+    }
+};
+
+export const createAttributeDataInternal  = async (db: any, data: ICompany, idOrder?: number, idCompany?: number): Promise<void> => {
+    if (!idOrder && idCompany) {
+        const insertOrderQuery = `
+            INSERT INTO TB_Order (idCompany, idStatusData, idStatusModel, createAt)
+            OUTPUT INSERTED.id
+            VALUES (@idCompany, @idStatusData, @idStatusModel, GETDATE())
+        `;
+
+        const insertOrderResult = await db.request()
+            .input('idCompany', idCompany)
+            .input('idStatusData', 1)
+            .input('idStatusModel', 1)
+            .query(insertOrderQuery);
+
+        idOrder = insertOrderResult?.recordset?.[0]?.id;
+
+        if (!idOrder) {
+            throw new Error("Could not retrieve the ID of the created order within createAttributeData.");
+        }
+    }
+
+    if (!idOrder) {
+        throw new Error("idOrder or idCompany is required to create the attribute data.");
+    }
+
+    const {
+        currentBoxUsed, runCurrentBoxKitOnly, minimunNumBox, maximunNumBox, orderUsed,
+        weightDataAvailable, idWeightData, idBoxDimension, assignedBoxes,
+        itemClearanceRuleUsed, clearanceAmount, multipleItemsPreCubed, idFreightChargeMethod,
+        dimWeightFactor, idPackMaterial, packMaterialCost, corrugateType,
+        corrugateCost, freightCostPerLb
+    } = data;
+
+    const insertAttribetDataQuery = `INSERT INTO TB_AttributeData (
+        currentBoxUsed, runCurrentBoxKitOnly,
+        minimunNumBox, maximunNumBox, orderUsed, weightDataAvailable, idWeightData, idBoxDimension, assignedBoxes,
+        itemClearanceRuleUsed, clearanceAmount, multipleItemsPreCubed, idFreightChargeMethod,
+        dimWeightFactor, idPackMaterial, packMaterialCost, corrugateType, corrugateCost, freightCostPerLb, idOrder, createAt
+    ) OUTPUT INSERTED.* VALUES (
+        @currentBoxUsed, @runCurrentBoxKitOnly,
+        @minimunNumBox, @maximunNumBox, @orderUsed, @weightDataAvailable, @idWeightData, @idBoxDimension, @assignedBoxes,
+        @itemClearanceRuleUsed, @clearanceAmount, @multipleItemsPreCubed, @idFreightChargeMethod,
+        @dimWeightFactor, @idPackMaterial, @packMaterialCost, @corrugateType, @corrugateCost, @freightCostPerLb, @idOrder, GETDATE()
+    )`;
+
+    await db.request()
+        .input('currentBoxUsed', currentBoxUsed)
+        .input('runCurrentBoxKitOnly', runCurrentBoxKitOnly)
+        .input('minimunNumBox', minimunNumBox)
+        .input('maximunNumBox', maximunNumBox)
+        .input('orderUsed', orderUsed)
+        .input('weightDataAvailable', weightDataAvailable)
+        .input('idWeightData', idWeightData)
+        .input('idBoxDimension', idBoxDimension)
+        .input('assignedBoxes', assignedBoxes)
+        .input('itemClearanceRuleUsed', itemClearanceRuleUsed)
+        .input('clearanceAmount', clearanceAmount)
+        .input('multipleItemsPreCubed', multipleItemsPreCubed)
+        .input('idFreightChargeMethod', idFreightChargeMethod)
+        .input('dimWeightFactor', dimWeightFactor)
+        .input('idPackMaterial', idPackMaterial)
+        .input('packMaterialCost', packMaterialCost)
+        .input('corrugateType', corrugateType || null)
+        .input('corrugateCost', corrugateCost)
+        .input('freightCostPerLb', freightCostPerLb)
+        .input('idOrder', idOrder)
+        .query(insertAttribetDataQuery);
+};
