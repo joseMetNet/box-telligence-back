@@ -1,8 +1,9 @@
 import { connectToSqlServer } from "../DB/config";
-import { ShipmentItem } from "../interface/Results.Interface";
+import { ShipmentItem, IResultsPaginated, IResult } from "../interface/Results.Interface";
 
 export const runEvenDistributionModel = async (idOrder: number) => {
   const db = await connectToSqlServer();
+  if (!db) throw new Error("No se pudo conectar a la base de datos");
 
   const itemsResult = await db?.request().input("idOrder", idOrder).query(`
       SELECT * FROM TB_ShipmentDataFile WHERE idOrder = @idOrder ORDER BY cubedItemLength DESC
@@ -162,5 +163,47 @@ export const runEvenDistributionModel = async (idOrder: number) => {
   return {
     success: true,
     message: "Even Distribution model completed successfully",
+  };
+};
+
+export const getResultsByOrder = async (
+  idOrder: number,
+  page: number = 1,
+  pageSize: number = 10
+): Promise<IResultsPaginated> => {
+  const db = await connectToSqlServer();
+  if (!db) throw new Error("No se pudo conectar a la base de datos");
+  const offset = (page - 1) * pageSize;
+
+  const totalResult = await db
+    .request()
+    .input("idOrder", idOrder)
+    .query("SELECT COUNT(*) as total FROM TB_Results WHERE idOrder = @idOrder");
+  const total = totalResult.recordset[0].total;
+
+  const resultsQuery = await db
+    .request()
+    .input("idOrder", idOrder)
+    .input("pageSize", pageSize)
+    .input("offset", offset)
+    .query(`
+      SELECT r.*, s.orderId, s.item1Length, s.item1Width, s.item1Height, s.item1Weight,
+             s.item2Length, s.item2Width, s.item2Height, s.item2Weight,
+             s.item3Length, s.item3Width, s.item3Height, s.item3Weight,
+             s.item4Length, s.item4Width, s.item4Height, s.item4Weight,
+             s.item5Length, s.item5Width, s.item5Height, s.item5Weight
+      FROM TB_Results r
+      LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
+      WHERE r.idOrder = @idOrder
+      ORDER BY r.id
+      OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+    `);
+
+  return {
+    results: resultsQuery.recordset,
+    total,
+    page,
+    pageSize,
+    totalPages: Math.ceil(total / pageSize),
   };
 };

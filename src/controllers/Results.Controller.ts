@@ -23,3 +23,19 @@ export const runEvenDistributionModelController: RequestHandler = async (req, re
     });
   }
 };
+
+export const getResultsByOrderController: RequestHandler = async (req, res) => {
+  try {
+    const idOrder = Number(req.query.idOrder || req.params.idOrder);
+    const page = Number(req.query.page) || 1;
+    const pageSize = Number(req.query.pageSize) || 10;
+    if (isNaN(idOrder)) {
+      return res.status(400).json({ message: "idOrder is required and must be a number" });
+    }
+    const data = await repository.getResultsByOrder(idOrder, page, pageSize);
+    res.status(200).json({ message: parseMessageI18n("results.found", req), ...data });
+  } catch (err) {
+    console.log("Error in getResultsByOrderController", err);
+    res.status(500).json({ message: parseMessageI18n("error_server", req) });
+  }
+};

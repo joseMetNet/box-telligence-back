@@ -18,3 +18,58 @@ export interface AttributeData {
   corrugateCost: number;
   freightCostPerLb: number;
 }
+
+export interface IResult {
+    id: number;
+    idOrder: number;
+    idAttributeData: number;
+    idShipmenDataFile: number;
+    model: string;
+    boxNumber: number;
+    newAssignedBoxLength: number;
+    newAssignedBoxWidth: number;
+    newAssignedBoxHeight: number;
+    currentBoxCorrugateArea: number;
+    newBoxCorrugateArea: number;
+    currentBoxCorrugateCost: number;
+    newBoxCorrugateCost: number;
+    currentDimWeight: number;
+    newDimWeight: number;
+    currentBillableWeight: number;
+    newBillableWeight: number;
+    currentFreightCost: number;
+    newFreightCost: number;
+    currentVoidVolume: number;
+    newVoidVolume: number;
+    currentVoidFillCost: number;
+    newVoidFillCost: number;
+    orderId: number;
+    item1Length: number;
+    item1Width: number;
+    item1Height: number;
+    item1Weight: number;
+    item2Length: number;
+    item2Width: number;
+    item2Height: number;
+    item2Weight: number;
+    item3Length: number;
+    item3Width: number;
+    item3Height: number;
+    item3Weight: number;
+    item4Length: number;
+    item4Width: number;
+    item4Height: number;
+    item4Weight: number;
+    item5Length: number;
+    item5Width: number;
+    item5Height: number;
+    item5Weight: number;
+}
+
+export interface IResultsPaginated {
+    results: IResult[];
+    total: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+}
