@@ -64,5 +64,8 @@
 		"created": "Ok"
 	},
 	"even_distribution_completed": "even_distribution_completed",
-	"error_server": "error_server"
+	"error_server": "error_server",
+	"results": {
+		"found": "results.found"
+	}
 }
