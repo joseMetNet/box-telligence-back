@@ -18,7 +18,11 @@ import freightChargeMethodRouter from "../routes/FreightChargeMethod.Router";
 import boxkitFileRouter from "../routes/BoxKitFile.Router";
 import shipmentDataFileRouter from "../routes/ShipmentDataFile.Router";
 import attributeDataRouter from "../routes/AttributeData.Router";
+<<<<<<< HEAD
 import modelDataRouter from "../routes/ModelData.Router";
+=======
+import evenDistributionModelRouter from "../routes/Results.Router";
+>>>>>>> 7537971f4e8f7bb963de7d0fc658321bb587bd12
 
 class Server {
   private app: Application;
@@ -100,8 +104,13 @@ class Server {
     this.app.use(this.path.url, freightChargeMethodRouter);
     this.app.use(this.path.url, boxkitFileRouter);
     this.app.use(this.path.url, shipmentDataFileRouter);
+<<<<<<< HEAD
     this.app.use(this.path.url, attributeDataRouter);
     this.app.use(this.path.url, modelDataRouter)
+=======
+    this.app.use(this.path.url, attributeDataRouter)
+    this.app.use(this.path.url, evenDistributionModelRouter);
+>>>>>>> 7537971f4e8f7bb963de7d0fc658321bb587bd12
   }
   
   listen() {
