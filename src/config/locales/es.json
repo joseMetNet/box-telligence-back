@@ -62,5 +62,7 @@
 	"attributeData": {
 		"error_creating": "Ocurrio un error al crear",
 		"created": "Ok"
-	}
+	},
+	"even_distribution_completed": "even_distribution_completed",
+	"error_server": "error_server"
 }
