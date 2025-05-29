@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { runEvenDistributionModelController, getResultsByOrderController } from "../controllers/Results.Controller";
+import { runEvenDistributionModelController, getResultsByOrderController, runTopFrequenciesModelController, runEvenVolumeModelController, runEvenVolumeDinamicoModelController } from "../controllers/Results.Controller";
 
 const evenDistributionModelRouter = Router();
 
@@ -214,5 +214,185 @@ evenDistributionModelRouter.post("/even-distribution-model", runEvenDistribution
  *         description: Error interno del servidor
  */
 evenDistributionModelRouter.get("/results", getResultsByOrderController);
+
+/**
+ * @swagger
+ * /top-frecuencies-model:
+ *   post:
+ *     tags:
+ *       - Distribution Models
+ *     summary: Run Top Frecuencies model for a shipment order
+ *     description: Executes the Top Frecuencies model for the specified order and stores the results.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - idOrder
+ *             properties:
+ *               idOrder:
+ *                 type: integer
+ *                 example: 123
+ *     responses:
+ *       200:
+ *         description: Top Frecuencies model completed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: top_frecuencies_completed
+ *       400:
+ *         description: Missing required parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: missing_idOrder
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: error_server
+ *                 error:
+ *                   type: string
+ *                   example: Some internal error message
+ */
+evenDistributionModelRouter.post("/top-frecuencies-model", runTopFrequenciesModelController);
+
+/**
+ * @swagger
+ * /even-volume-model:
+ *   post:
+ *     tags:
+ *       - Distribution Models
+ *     summary: Run Even Volume model for a shipment order
+ *     description: Executes the Even Volume model for the specified order and stores the results.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - idOrder
+ *             properties:
+ *               idOrder:
+ *                 type: integer
+ *                 example: 123
+ *     responses:
+ *       200:
+ *         description: Even Volume model completed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: even_volume_completed
+ *       400:
+ *         description: Missing required parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: missing_idOrder
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: error_server
+ *                 error:
+ *                   type: string
+ *                   example: Some internal error message
+ */
+evenDistributionModelRouter.post("/even-volume-model", runEvenVolumeModelController);
+
+/**
+ * @swagger
+ * /even-volume-dinamico:
+ *   post:
+ *     tags:
+ *       - Distribution Models
+ *     summary: Run Even Volume Dinamico model for a shipment order
+ *     description: Executes the Even Volume model for the specified order and stores the results.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - idOrder
+ *             properties:
+ *               idOrder:
+ *                 type: integer
+ *                 example: 123
+ *     responses:
+ *       200:
+ *         description: Even Volume Dinamico model completed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: even_volume_dinamico_completed
+ *       400:
+ *         description: Missing required parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: missing_idOrder
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: error_server
+ *                 error:
+ *                   type: string
+ *                   example: Some internal error message
+ */
+evenDistributionModelRouter.post("/even-volume-dinamico", runEvenVolumeDinamicoModelController);
 
 export default evenDistributionModelRouter;
