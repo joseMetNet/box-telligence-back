@@ -67,5 +67,7 @@
 	"error_server": "error_server",
 	"results": {
 		"found": "results.found"
-	}
+	},
+	"top_frecuencies_completed": "top_frecuencies_completed",
+	"even_Volume_completed": "even_Volume_completed"
 }

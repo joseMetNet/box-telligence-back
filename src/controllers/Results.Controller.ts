@@ -39,3 +39,73 @@ export const getResultsByOrderController: RequestHandler = async (req, res) => {
     res.status(500).json({ message: parseMessageI18n("error_server", req) });
   }
 };
+
+export const runTopFrequenciesModelController: RequestHandler = async (req, res) => {
+  try {
+    let idOrder = req.body.idOrder;
+
+    if (typeof idOrder === "object" && idOrder !== null) {
+      idOrder = idOrder.value || idOrder.id || JSON.stringify(idOrder);
+    }
+
+    if (!idOrder || isNaN(Number(idOrder))) {
+      return res.status(400).json({ message: parseMessageI18n("missing_idOrder", req) });
+    }
+
+    const result = await repository.runTopFrequenciesModel(Number(idOrder));
+    res.status(200).json({
+      ...(typeof result === "object" && result !== null ? result : { result }),
+      message: parseMessageI18n("top_frecuencies_completed", req),
+    });
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({
+      message: parseMessageI18n("error_server", req),
+      error: err.message,
+    });
+  }
+};
+
+export const runEvenVolumeModelController: RequestHandler = async (req, res) => {
+  try {
+    const { idOrder } = req.body;
+
+    if (!idOrder) {
+      return res.status(400).json({ message: parseMessageI18n("missing_idOrder", req) });
+    }
+
+    const result = await repository.runEvenVolumeModel(idOrder);
+    res.status(200).json({
+      ...result,
+      message: parseMessageI18n("even_Volume_completed", req),
+    });
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({
+      message: parseMessageI18n("error_server", req),
+      error: err.message,
+    });
+  }
+};
+
+export const runEvenVolumeDinamicoModelController: RequestHandler = async (req, res) => {
+  try {
+    const { idOrder } = req.body;
+
+    if (!idOrder) {
+      return res.status(400).json({ message: parseMessageI18n("missing_idOrder", req) });
+    }
+
+    const result = await repository.runEvenVolumeDinamicoModel(idOrder);
+    res.status(200).json({
+      ...result,
+      message: parseMessageI18n("even_Volume_completed", req),
+    });
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({
+      message: parseMessageI18n("error_server", req),
+      error: err.message,
+    });
+  }
+};
