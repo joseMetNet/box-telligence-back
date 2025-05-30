@@ -166,6 +166,49 @@ export const runEvenDistributionModel = async (idOrder: number) => {
   };
 };
 
+/* GET ORIGINAL */
+// export const getResultsByOrder = async (
+//   idOrder: number,
+//   page: number = 1,
+//   pageSize: number = 10
+// ): Promise<IResultsPaginated> => {
+//   const db = await connectToSqlServer();
+//   if (!db) throw new Error("No se pudo conectar a la base de datos");
+//   const offset = (page - 1) * pageSize;
+
+//   const totalResult = await db
+//     .request()
+//     .input("idOrder", idOrder)
+//     .query("SELECT COUNT(*) as total FROM TB_Results WHERE idOrder = @idOrder");
+//   const total = totalResult.recordset[0].total;
+
+//   const resultsQuery = await db
+//     .request()
+//     .input("idOrder", idOrder)
+//     .input("pageSize", pageSize)
+//     .input("offset", offset)
+//     .query(`
+//       SELECT r.*, s.orderId, s.item1Length, s.item1Width, s.item1Height, s.item1Weight,
+//              s.item2Length, s.item2Width, s.item2Height, s.item2Weight,
+//              s.item3Length, s.item3Width, s.item3Height, s.item3Weight,
+//              s.item4Length, s.item4Width, s.item4Height, s.item4Weight,
+//              s.item5Length, s.item5Width, s.item5Height, s.item5Weight
+//       FROM TB_Results r
+//       LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
+//       WHERE r.idOrder = @idOrder
+//       ORDER BY r.id
+//       OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+//     `);
+
+//   return {
+//     results: resultsQuery.recordset,
+//     total,
+//     page,
+//     pageSize,
+//     totalPages: Math.ceil(total / pageSize),
+//   };
+// };
+
 export const getResultsByOrder = async (
   idOrder: number,
   page: number = 1,
@@ -175,18 +218,40 @@ export const getResultsByOrder = async (
   if (!db) throw new Error("No se pudo conectar a la base de datos");
   const offset = (page - 1) * pageSize;
 
-  const totalResult = await db
-    .request()
-    .input("idOrder", idOrder)
-    .query("SELECT COUNT(*) as total FROM TB_Results WHERE idOrder = @idOrder");
-  const total = totalResult.recordset[0].total;
-
-  const resultsQuery = await db
+  // 1. Se Obtenienen los boxNumber únicos para la paginación
+  const boxNumbersResult = await db
     .request()
     .input("idOrder", idOrder)
     .input("pageSize", pageSize)
     .input("offset", offset)
     .query(`
+      SELECT DISTINCT boxNumber
+      FROM TB_Results
+      WHERE idOrder = @idOrder
+      ORDER BY boxNumber
+      OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+    `);
+
+  const boxNumbers = boxNumbersResult.recordset.map((row: any) => row.boxNumber);
+
+  // 2. Obtener el total de boxNumbers únicos
+  const totalBoxNumbersResult = await db
+    .request()
+    .input("idOrder", idOrder)
+    .query(`
+      SELECT COUNT(DISTINCT boxNumber) as total
+      FROM TB_Results
+      WHERE idOrder = @idOrder
+    `);
+  const total = totalBoxNumbersResult.recordset[0].total;
+
+  // 3. Traer todos los registros de esos boxNumber
+  let results: any[] = [];
+  if (boxNumbers.length > 0) {
+    const inClause = boxNumbers.map((_, i) => `@boxNumber${i}`).join(',');
+    const request = db.request().input("idOrder", idOrder);
+    boxNumbers.forEach((num, i) => request.input(`boxNumber${i}`, num));
+    const resultsQuery = await request.query(`
       SELECT r.*, s.orderId, s.item1Length, s.item1Width, s.item1Height, s.item1Weight,
              s.item2Length, s.item2Width, s.item2Height, s.item2Weight,
              s.item3Length, s.item3Width, s.item3Height, s.item3Weight,
@@ -195,18 +260,46 @@ export const getResultsByOrder = async (
       FROM TB_Results r
       LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
       WHERE r.idOrder = @idOrder
-      ORDER BY r.id
-      OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+        AND r.boxNumber IN (${inClause})
+      ORDER BY r.boxNumber, r.id
     `);
+    results = resultsQuery.recordset;
+  }
+
+  // 4. Obtener el total de cajas usadas (COUNT(boxNumber)), min y max boxNumber
+  const statsResult = await db
+    .request()
+    .input("idOrder", idOrder)
+    .query(`
+      SELECT COUNT(boxNumber) as totalBoxesUsed, 
+             MIN(boxNumber) as minBoxNumber, 
+             MAX(boxNumber) as maxBoxNumber
+      FROM TB_Results
+      WHERE idOrder = @idOrder
+    `);
+  const { totalBoxesUsed, minBoxNumber, maxBoxNumber } = statsResult.recordset[0] || { totalBoxesUsed: 0, minBoxNumber: null, maxBoxNumber: null };
+
+  const summaryCards = [
+    { label: 'Current Number of Boxes Used', value: totalBoxesUsed },
+    { label: 'Minimum Number of Boxes to Analyze', value: minBoxNumber },
+    { label: 'Maximum Number of Boxes to Analyze', value: maxBoxNumber }
+  ];
 
   return {
-    results: resultsQuery.recordset,
+    results,
     total,
     page,
     pageSize,
     totalPages: Math.ceil(total / pageSize),
+    boxNumbers, // puedes devolverlos para referencia y se agrega en la interfaz
+    summaryCards,
+    totalBoxesUsed,
+    minBoxNumber,
+    maxBoxNumber,
   };
 };
+
+
 
 export const runTopFrequenciesModel = async (idOrder: number) => {
   const db = await connectToSqlServer();
@@ -700,4 +793,22 @@ export const runEvenVolumeDinamicoModel = async (idOrder: number) => {
     success: true,
     message: "Modelo EvenVolumeDinamico ejecutado exitosamente",
   };
+};
+
+export const existsResultsByOrder = async (idOrder: number): Promise<1 | 0> => {
+  const db = await connectToSqlServer();
+  if (!db) throw new Error("No se pudo conectar a la base de datos");
+  const result = await db.request()
+    .input("idOrder", idOrder)
+    .query("SELECT 1 as existsResult FROM TB_Results WHERE idOrder = @idOrder");
+  return result.recordset.length > 0 ? 1 : 0;
+};
+
+export const getValidateResultsByOrder = async (idOrder: number): Promise<1 | 0> => {
+  const db = await connectToSqlServer();
+  if (!db) throw new Error("No se pudo conectar a la base de datos");
+  const result = await db.request()
+    .input("idOrder", idOrder)
+    .query("SELECT 1 as existsResult FROM TB_Results WHERE idOrder = @idOrder");
+  return result.recordset.length > 0 ? 1 : 0;
 };

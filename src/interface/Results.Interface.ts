@@ -72,4 +72,17 @@ export interface IResultsPaginated {
     page: number;
     pageSize: number;
     totalPages: number;
+    boxNumbers: number[];
+    summaryCards: { label: string; value: number | null }[];
+    totalBoxesUsed: number; // total number of boxes used (COUNT(boxNumber))
+    minBoxNumber: number | null; // minimum boxNumber for the idOrder
+    maxBoxNumber: number | null; // maximum boxNumber for the idOrder
+}
+
+export interface IExistsResultResponse {
+    exists: 1 | 0;
+}
+
+export interface IValidateResultResponse {
+    exists: 1 | 0;
 }
