@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { runEvenDistributionModelController, getResultsByOrderController, runTopFrequenciesModelController, runEvenVolumeModelController, runEvenVolumeDinamicoModelController } from "../controllers/Results.Controller";
+import { runEvenDistributionModelController, getResultsByOrderController, runTopFrequenciesModelController, runEvenVolumeModelController, runEvenVolumeDinamicoModelController, existsResultsByOrderController, getValidateResultsByOrderController } from "../controllers/Results.Controller";
 
 const evenDistributionModelRouter = Router();
 
@@ -208,6 +208,17 @@ evenDistributionModelRouter.post("/even-distribution-model", runEvenDistribution
  *                   type: integer
  *                 totalPages:
  *                   type: integer
+ *                 totalBoxesUsed:
+ *                   type: integer
+ *                   description: Total number of boxes used (COUNT(boxNumber))
+ *                 minBoxNumber:
+ *                   type: integer
+ *                   nullable: true
+ *                   description: Minimum boxNumber for the idOrder
+ *                 maxBoxNumber:
+ *                   type: integer
+ *                   nullable: true
+ *                   description: Maximum boxNumber for the idOrder
  *       400:
  *         description: Parámetro idOrder inválido
  *       500:
@@ -394,5 +405,73 @@ evenDistributionModelRouter.post("/even-volume-model", runEvenVolumeModelControl
  *                   example: Some internal error message
  */
 evenDistributionModelRouter.post("/even-volume-dinamico", runEvenVolumeDinamicoModelController);
+
+/**
+ * @swagger
+ * /results/exists:
+ *   get:
+ *     tags:
+ *       - Results
+ *     summary: Verifica si existen resultados para un idOrder
+ *     description: Retorna 1 si existen resultados para el idOrder, 0 si no existen.
+ *     parameters:
+ *       - in: query
+ *         name: idOrder
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID de la orden a consultar
+ *     responses:
+ *       200:
+ *         description: Resultado de la existencia
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 exists:
+ *                   type: integer
+ *                   enum: [0, 1]
+ *                   example: 1
+ *       400:
+ *         description: Parámetro idOrder inválido
+ *       500:
+ *         description: Error interno del servidor
+ */
+evenDistributionModelRouter.get("/results/exists", existsResultsByOrderController);
+
+/**
+ * @swagger
+ * /results/validate:
+ *   get:
+ *     tags:
+ *       - Distribution Models
+ *     summary: Valida si existen resultados para un idOrder
+ *     description: Retorna 1 si existen resultados para el idOrder, 0 si no existen.
+ *     parameters:
+ *       - in: query
+ *         name: idOrder
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID de la orden a consultar
+ *     responses:
+ *       200:
+ *         description: Resultado de la validación
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 exists:
+ *                   type: integer
+ *                   enum: [0, 1]
+ *                   example: 1
+ *       400:
+ *         description: Parámetro idOrder inválido
+ *       500:
+ *         description: Error interno del servidor
+ */
+evenDistributionModelRouter.get("/results/validate", getValidateResultsByOrderController);
 
 export default evenDistributionModelRouter;

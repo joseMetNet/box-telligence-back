@@ -1,6 +1,7 @@
 import { RequestHandler } from "express";
 import * as repository from '../repository/Results.repository';
 import { parseMessageI18n } from '../utils/parse-messga-i18';
+import { IExistsResultResponse, IValidateResultResponse } from "../interface/Results.Interface";
 
 export const runEvenDistributionModelController: RequestHandler = async (req, res) => {
   try {
@@ -107,5 +108,35 @@ export const runEvenVolumeDinamicoModelController: RequestHandler = async (req, 
       message: parseMessageI18n("error_server", req),
       error: err.message,
     });
+  }
+};
+
+export const existsResultsByOrderController: RequestHandler = async (req, res) => {
+  try {
+    const idOrder = Number(req.query.idOrder || req.params.idOrder);
+    if (isNaN(idOrder)) {
+      return res.status(400).json({ message: "idOrder is required and must be a number" });
+    }
+    const exists = await repository.existsResultsByOrder(idOrder);
+    const response: IExistsResultResponse = { exists };
+    res.status(200).json(response);
+  } catch (err) {
+    console.log("Error in existsResultsByOrderController", err);
+    res.status(500).json({ message: parseMessageI18n("error_server", req) });
+  }
+};
+
+export const getValidateResultsByOrderController: RequestHandler = async (req, res) => {
+  try {
+    const idOrder = Number(req.query.idOrder || req.params.idOrder);
+    if (isNaN(idOrder)) {
+      return res.status(400).json({ message: "idOrder is required and must be a number" });
+    }
+    const exists = await repository.getValidateResultsByOrder(idOrder);
+    const response: IValidateResultResponse = { exists };
+    res.status(200).json(response);
+  } catch (err) {
+    console.log("Error in getValidateResultsByOrderController", err);
+    res.status(500).json({ message: parseMessageI18n("error_server", req) });
   }
 };
