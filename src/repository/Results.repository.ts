@@ -35,9 +35,9 @@ export const runEvenDistributionModel = async (idOrder: number) => {
     runCurrentBoxKitOnly === 1
       ? [attrData.currentBoxUsed]
       : Array.from(
-          { length: attrData.maximunNumBox - attrData.minimunNumBox + 1 },
-          (_, i) => attrData.minimunNumBox + i
-        );
+        { length: attrData.maximunNumBox - attrData.minimunNumBox + 1 },
+        (_, i) => attrData.minimunNumBox + i
+      );
 
   const anchorLength = items[0]["cubedItemLength"];
   const anchorWidth = Math.max(...items.map((item) => item["cubedItemWidth"]));
@@ -64,9 +64,9 @@ export const runEvenDistributionModel = async (idOrder: number) => {
       for (const item of segmentItems) {
         const currentArea =
           item.currentAssignedBoxLength *
-            (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
+          (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
           item.currentAssignedBoxWidth *
-            (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth);
+          (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth);
 
         const newArea =
           anchorLength * (anchorWidth + anchorHeight) +
@@ -216,87 +216,106 @@ export const getResultsByOrder = async (
 ): Promise<IResultsPaginated> => {
   const db = await connectToSqlServer();
   if (!db) throw new Error("No se pudo conectar a la base de datos");
-  const offset = (page - 1) * pageSize;
 
-  // 1. Se Obtenienen los boxNumber únicos para la paginación
-  const boxNumbersResult = await db
-    .request()
-    .input("idOrder", idOrder)
-    .input("pageSize", pageSize)
-    .input("offset", offset)
-    .query(`
-      SELECT DISTINCT boxNumber
-      FROM TB_Results
-      WHERE idOrder = @idOrder
-      ORDER BY boxNumber
-      OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
-    `);
-
-  const boxNumbers = boxNumbersResult.recordset.map((row: any) => row.boxNumber);
-
-  // 2. Obtener el total de boxNumbers únicos
-  const totalBoxNumbersResult = await db
+  // 1. Obtener los modelos distintos para la orden
+  const modelsResult = await db
     .request()
     .input("idOrder", idOrder)
     .query(`
-      SELECT COUNT(DISTINCT boxNumber) as total
+      SELECT DISTINCT model
       FROM TB_Results
       WHERE idOrder = @idOrder
     `);
-  const total = totalBoxNumbersResult.recordset[0].total;
+  const models = modelsResult.recordset.map((row: any) => row.model);
 
-  // 3. Traer todos los registros de esos boxNumber
-  let results: any[] = [];
-  if (boxNumbers.length > 0) {
-    const inClause = boxNumbers.map((_, i) => `@boxNumber${i}`).join(',');
-    const request = db.request().input("idOrder", idOrder);
-    boxNumbers.forEach((num, i) => request.input(`boxNumber${i}`, num));
-    const resultsQuery = await request.query(`
-      SELECT r.*, s.orderId, s.item1Length, s.item1Width, s.item1Height, s.item1Weight,
-             s.item2Length, s.item2Width, s.item2Height, s.item2Weight,
-             s.item3Length, s.item3Width, s.item3Height, s.item3Weight,
-             s.item4Length, s.item4Width, s.item4Height, s.item4Weight,
-             s.item5Length, s.item5Width, s.item5Height, s.item5Weight
-      FROM TB_Results r
-      LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
-      WHERE r.idOrder = @idOrder
-        AND r.boxNumber IN (${inClause})
-      ORDER BY r.boxNumber, r.id
-    `);
-    results = resultsQuery.recordset;
+  // 2. Para cada modelo, obtener paginado y summary
+  const modelGroups = [];
+  for (const model of models) {
+    // a) Paginación de boxNumbers únicos para este modelo
+    const boxNumbersResult = await db
+      .request()
+      .input("idOrder", idOrder)
+      .input("model", model)
+      .input("pageSize", pageSize)
+      .input("offset", (page - 1) * pageSize)
+      .query(`
+        SELECT DISTINCT boxNumber
+        FROM TB_Results
+        WHERE idOrder = @idOrder AND model = @model
+        ORDER BY boxNumber
+        OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+      `);
+    const boxNumbers = boxNumbersResult.recordset.map((row: any) => row.boxNumber);
+
+    // b) Total de boxNumbers únicos para este modelo
+    const totalBoxNumbersResult = await db
+      .request()
+      .input("idOrder", idOrder)
+      .input("model", model)
+      .query(`
+        SELECT COUNT(DISTINCT boxNumber) as total
+        FROM TB_Results
+        WHERE idOrder = @idOrder AND model = @model
+      `);
+    const total = totalBoxNumbersResult.recordset[0]?.total || 0;
+
+    // c) Traer todos los registros de esos boxNumber para este modelo
+    let results: any[] = [];
+    if (boxNumbers.length > 0) {
+      const inClause = boxNumbers.map((_, i) => `@boxNumber${i}`).join(',');
+      const request = db.request().input("idOrder", idOrder).input("model", model);
+      boxNumbers.forEach((num, i) => request.input(`boxNumber${i}`, num));
+      const resultsQuery = await request.query(`
+        SELECT r.*, s.orderId, s.item1Length, s.item1Width, s.item1Height, s.item1Weight,
+               s.item2Length, s.item2Width, s.item2Height, s.item2Weight,
+               s.item3Length, s.item3Width, s.item3Height, s.item3Weight,
+               s.item4Length, s.item4Width, s.item4Height, s.item4Weight,
+               s.item5Length, s.item5Width, s.item5Height, s.item5Weight
+        FROM TB_Results r
+        LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
+        WHERE r.idOrder = @idOrder AND r.model = @model
+          AND r.boxNumber IN (${inClause})
+        ORDER BY r.boxNumber, r.id
+      `);
+      results = resultsQuery.recordset;
+    }
+
+    // d) Obtener summaryCards y stats para este modelo
+    const statsResult = await db
+      .request()
+      .input("idOrder", idOrder)
+      .input("model", model)
+      .query(`
+        SELECT 
+              currentBoxUsed as totalBoxesUsed, 
+              minimunNumBox as minBoxNumber, 
+              maximunNumBox as maxBoxNumber
+              FROM TB_AttributeData
+        WHERE idOrder = @idOrder 
+      `);
+    const { totalBoxesUsed, minBoxNumber, maxBoxNumber } = statsResult.recordset[0] || { totalBoxesUsed: 0, minBoxNumber: null, maxBoxNumber: null };
+    const summaryCards = [
+      { label: 'Current Number of Boxes Used', value: totalBoxesUsed },
+      { label: 'Minimum Number of Boxes to Analyze', value: minBoxNumber },
+      { label: 'Maximum Number of Boxes to Analyze', value: maxBoxNumber }
+    ];
+
+    modelGroups.push({
+      model,
+      results,
+      boxNumbers,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize),
+      summaryCards,
+      totalBoxesUsed,
+      minBoxNumber,
+      maxBoxNumber,
+    });
   }
 
-  // 4. Obtener el total de cajas usadas (COUNT(boxNumber)), min y max boxNumber
-  const statsResult = await db
-    .request()
-    .input("idOrder", idOrder)
-    .query(`
-      SELECT COUNT(boxNumber) as totalBoxesUsed, 
-             MIN(boxNumber) as minBoxNumber, 
-             MAX(boxNumber) as maxBoxNumber
-      FROM TB_Results
-      WHERE idOrder = @idOrder
-    `);
-  const { totalBoxesUsed, minBoxNumber, maxBoxNumber } = statsResult.recordset[0] || { totalBoxesUsed: 0, minBoxNumber: null, maxBoxNumber: null };
-
-  const summaryCards = [
-    { label: 'Current Number of Boxes Used', value: totalBoxesUsed },
-    { label: 'Minimum Number of Boxes to Analyze', value: minBoxNumber },
-    { label: 'Maximum Number of Boxes to Analyze', value: maxBoxNumber }
-  ];
-
-  return {
-    results,
-    total,
-    page,
-    pageSize,
-    totalPages: Math.ceil(total / pageSize),
-    boxNumbers, // puedes devolverlos para referencia y se agrega en la interfaz
-    summaryCards,
-    totalBoxesUsed,
-    minBoxNumber,
-    maxBoxNumber,
-  };
+  return { models: modelGroups };
 };
 
 
@@ -327,9 +346,9 @@ export const runTopFrequenciesModel = async (idOrder: number) => {
   const numBoxesArray: number[] = runCurrentBoxKitOnly === 1
     ? [attrData.currentBoxUsed]
     : Array.from(
-        { length: attrData.maximunNumBox - attrData.minimunNumBox + 1 },
-        (_, i) => attrData.minimunNumBox + i
-      );
+      { length: attrData.maximunNumBox - attrData.minimunNumBox + 1 },
+      (_, i) => attrData.minimunNumBox + i
+    );
 
   const dimWeightFactor = attrData.dimWeightFactor;
   const packMaterialCost = attrData.packMaterialCost;
@@ -467,9 +486,9 @@ export const runEvenVolumeModel = async (idOrder: number) => {
   const numBoxesArray: number[] = runCurrentBoxKitOnly === 1
     ? [attrData.currentBoxUsed]
     : Array.from(
-        { length: attrData.maximunNumBox - attrData.minimunNumBox + 1 },
-        (_, i) => attrData.minimunNumBox + i
-      );
+      { length: attrData.maximunNumBox - attrData.minimunNumBox + 1 },
+      (_, i) => attrData.minimunNumBox + i
+    );
 
   const dimWeightFactor = attrData.dimWeightFactor;
   const packMaterialCost = attrData.packMaterialCost;
@@ -482,7 +501,7 @@ export const runEvenVolumeModel = async (idOrder: number) => {
       itemVolume: item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight,
     }));
 
-    enrichedItems.sort((a, b) => b.itemVolume - a.itemVolume); 
+    enrichedItems.sort((a, b) => b.itemVolume - a.itemVolume);
 
     const totalVolume = enrichedItems.reduce((sum, item) => sum + item.itemVolume, 0);
     const targetVolumePerBox = totalVolume / numBoxes;

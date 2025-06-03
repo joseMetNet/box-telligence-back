@@ -67,16 +67,31 @@ export interface IResult {
 }
 
 export interface IResultsPaginated {
-    results: IResult[];
-    total: number;
-    page: number;
-    pageSize: number;
-    totalPages: number;
-    boxNumbers: number[];
-    summaryCards: { label: string; value: number | null }[];
-    totalBoxesUsed: number; // total number of boxes used (COUNT(boxNumber))
-    minBoxNumber: number | null; // minimum boxNumber for the idOrder
-    maxBoxNumber: number | null; // maximum boxNumber for the idOrder
+    // Agrupación por modelo
+    models: {
+        model: string;
+        results: IResult[];
+        boxNumbers: number[];
+        total: number;
+        page: number;
+        pageSize: number;
+        totalPages: number;
+        summaryCards: { label: string; value: number | null }[];
+        totalBoxesUsed: number;
+        minBoxNumber: number | null;
+        maxBoxNumber: number | null;
+    }[];
+
+    // results: IResult[];
+    // total: number;
+    // page: number;
+    // pageSize: number;
+    // totalPages: number;
+    // boxNumbers: number[];
+    // summaryCards: { label: string; value: number | null }[];
+    // totalBoxesUsed: number; // total number of boxes used (COUNT(boxNumber))
+    // minBoxNumber: number | null; // minimum boxNumber for the idOrder
+    // maxBoxNumber: number | null; // maximum boxNumber for the idOrder
 }
 
 export interface IExistsResultResponse {
