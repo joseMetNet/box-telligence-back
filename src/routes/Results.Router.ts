@@ -188,7 +188,7 @@ evenDistributionModelRouter.post("/even-distribution-model", runEvenDistribution
  *         description: Cantidad de resultados por página
  *     responses:
  *       200:
- *         description: Resultados encontrados
+ *         description: Resultados encontrados agrupados por modelo
  *         content:
  *           application/json:
  *             schema:
@@ -196,29 +196,48 @@ evenDistributionModelRouter.post("/even-distribution-model", runEvenDistribution
  *               properties:
  *                 message:
  *                   type: string
- *                 results:
+ *                 models:
  *                   type: array
  *                   items:
- *                     $ref: '#/components/schemas/IResult'
- *                 total:
- *                   type: integer
- *                 page:
- *                   type: integer
- *                 pageSize:
- *                   type: integer
- *                 totalPages:
- *                   type: integer
- *                 totalBoxesUsed:
- *                   type: integer
- *                   description: Total number of boxes used (COUNT(boxNumber))
- *                 minBoxNumber:
- *                   type: integer
- *                   nullable: true
- *                   description: Minimum boxNumber for the idOrder
- *                 maxBoxNumber:
- *                   type: integer
- *                   nullable: true
- *                   description: Maximum boxNumber for the idOrder
+ *                     type: object
+ *                     properties:
+ *                       model:
+ *                         type: string
+ *                         description: Nombre del modelo (EvenDistribution, TopFrequencies, EvenVolume, EvenVolumeDinamico)
+ *                       results:
+ *                         type: array
+ *                         items:
+ *                           $ref: '#/components/schemas/IResult'
+ *                       boxNumbers:
+ *                         type: array
+ *                         items:
+ *                           type: integer
+ *                       total:
+ *                         type: integer
+ *                       page:
+ *                         type: integer
+ *                       pageSize:
+ *                         type: integer
+ *                       totalPages:
+ *                         type: integer
+ *                       summaryCards:
+ *                         type: array
+ *                         items:
+ *                           type: object
+ *                           properties:
+ *                             label:
+ *                               type: string
+ *                             value:
+ *                               type: integer
+ *                               nullable: true
+ *                       totalBoxesUsed:
+ *                         type: integer
+ *                       minBoxNumber:
+ *                         type: integer
+ *                         nullable: true
+ *                       maxBoxNumber:
+ *                         type: integer
+ *                         nullable: true
  *       400:
  *         description: Parámetro idOrder inválido
  *       500:
