@@ -224,3 +224,155 @@ const parseDecimalValue = (value: any): number | null => {
     const num = Number(value);
     return isNaN(num) ? null : num;
 };
+
+export const getItemsLargestAspectRatioByIdOrder = async (
+  idOrder: number
+): Promise<any[]> => {
+  const db = await connectToSqlServer();
+  if (!db) throw new Error("No se pudo conectar a la base de datos");
+
+  const query = `
+    SELECT TOP 10
+      idOrder,
+      orderId,
+      idShipmenDataFile,
+      itemNumber,
+      itemLength,
+      itemWidth,
+      itemHeight,
+      itemWeight,
+      itemLength / NULLIF(itemWidth, 0) AS aspectRatio,
+      itemLength * itemWidth AS itemArea
+    FROM (
+      SELECT 
+        @idOrder AS idOrder,
+        s.orderId,
+        s.id AS idShipmenDataFile,
+        'Item 1' AS itemNumber,
+        s.item1Length AS itemLength,
+        s.item1Width AS itemWidth,
+        s.item1Height AS itemHeight,
+        s.item1Weight AS itemWeight
+      FROM TB_ShipmentDataFile s
+      WHERE s.idOrder = @idOrder AND s.item1Length IS NOT NULL AND s.item1Width IS NOT NULL
+
+      UNION ALL
+
+      SELECT 
+        @idOrder, s.id, s.orderId, 'Item 2', s.item2Length, s.item2Width, s.item2Height, s.item2Weight
+      FROM TB_ShipmentDataFile s
+      WHERE s.idOrder = @idOrder AND s.item2Length IS NOT NULL AND s.item2Width IS NOT NULL
+
+      UNION ALL
+
+      SELECT 
+        @idOrder, s.id, s.orderId, 'Item 3', s.item3Length, s.item3Width, s.item3Height, s.item3Weight
+      FROM TB_ShipmentDataFile s
+      WHERE s.idOrder = @idOrder AND s.item3Length IS NOT NULL AND s.item3Width IS NOT NULL
+
+      UNION ALL
+
+      SELECT 
+        @idOrder, s.id, s.orderId, 'Item 4', s.item4Length, s.item4Width, s.item4Height, s.item4Weight
+      FROM TB_ShipmentDataFile s
+      WHERE s.idOrder = @idOrder AND s.item4Length IS NOT NULL AND s.item4Width IS NOT NULL
+
+      UNION ALL
+
+      SELECT 
+        @idOrder, s.id, s.orderId, 'Item 5', s.item5Length, s.item5Width, s.item5Height, s.item5Weight
+      FROM TB_ShipmentDataFile s
+      WHERE s.idOrder = @idOrder AND s.item5Length IS NOT NULL AND s.item5Width IS NOT NULL
+    ) AS items
+    ORDER BY itemLength * itemWidth DESC;
+  `;
+
+  const result = await db
+    .request()
+    .input("idOrder", idOrder)
+    .query(query);
+
+  return result.recordset;
+};
+
+export const getItemsLargestVoidVolumeByIdOrder = async (
+  idOrder: number
+): Promise<any[]> => {
+  const db = await connectToSqlServer();
+  if (!db) throw new Error("No se pudo conectar a la base de datos");
+
+  const query = `
+    SELECT TOP 10
+      idOrder,
+      orderId,
+      idShipmenDataFile,
+      itemNumber,
+      itemLength,
+      itemWidth,
+      itemHeight,
+      itemWeight,
+      currentAssignedBoxLength,
+      currentAssignedBoxWidth,
+      currentAssignedBoxHeight,
+      (currentAssignedBoxLength * currentAssignedBoxWidth * currentAssignedBoxHeight) -
+      (itemLength * itemWidth * itemHeight) AS voidVolume
+    FROM (
+      SELECT 
+        @idOrder AS idOrder,
+        s.orderId,
+        s.id AS idShipmenDataFile,
+        'Item 1' AS itemNumber,
+        s.item1Length AS itemLength,
+        s.item1Width AS itemWidth,
+        s.item1Height AS itemHeight,
+        s.item1Weight AS itemWeight,
+        s.currentAssignedBoxLength,
+        s.currentAssignedBoxWidth,
+        s.currentAssignedBoxHeight
+      FROM TB_ShipmentDataFile s
+      WHERE s.idOrder = @idOrder AND s.item1Length IS NOT NULL AND s.item1Width IS NOT NULL AND s.item1Height IS NOT NULL
+
+      UNION ALL
+
+      SELECT 
+        @idOrder, s.orderId, s.id, 'Item 2', s.item2Length, s.item2Width, s.item2Height, s.item2Weight,
+        s.currentAssignedBoxLength, s.currentAssignedBoxWidth, s.currentAssignedBoxHeight
+      FROM TB_ShipmentDataFile s
+      WHERE s.idOrder = @idOrder AND s.item2Length IS NOT NULL AND s.item2Width IS NOT NULL AND s.item2Height IS NOT NULL
+
+      UNION ALL
+
+      SELECT 
+        @idOrder, s.orderId, s.id, 'Item 3', s.item3Length, s.item3Width, s.item3Height, s.item3Weight,
+        s.currentAssignedBoxLength, s.currentAssignedBoxWidth, s.currentAssignedBoxHeight
+      FROM TB_ShipmentDataFile s
+      WHERE s.idOrder = @idOrder AND s.item3Length IS NOT NULL AND s.item3Width IS NOT NULL AND s.item3Height IS NOT NULL
+
+      UNION ALL
+
+      SELECT 
+        @idOrder, s.orderId, s.id, 'Item 4', s.item4Length, s.item4Width, s.item4Height, s.item4Weight,
+        s.currentAssignedBoxLength, s.currentAssignedBoxWidth, s.currentAssignedBoxHeight
+      FROM TB_ShipmentDataFile s
+      WHERE s.idOrder = @idOrder AND s.item4Length IS NOT NULL AND s.item4Width IS NOT NULL AND s.item4Height IS NOT NULL
+
+      UNION ALL
+
+      SELECT 
+        @idOrder, s.orderId, s.id, 'Item 5', s.item5Length, s.item5Width, s.item5Height, s.item5Weight,
+        s.currentAssignedBoxLength, s.currentAssignedBoxWidth, s.currentAssignedBoxHeight
+      FROM TB_ShipmentDataFile s
+      WHERE s.idOrder = @idOrder AND s.item5Length IS NOT NULL AND s.item5Width IS NOT NULL AND s.item5Height IS NOT NULL
+    ) AS items
+    ORDER BY 
+      (currentAssignedBoxLength * currentAssignedBoxWidth * currentAssignedBoxHeight) -
+      (itemLength * itemWidth * itemHeight) DESC;
+  `;
+
+  const result = await db
+    .request()
+    .input("idOrder", idOrder)
+    .query(query);
+
+  return result.recordset;
+};

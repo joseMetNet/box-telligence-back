@@ -45,3 +45,51 @@ export const uploadExcelShipmentDataFileController: RequestHandler = async (req,
         return res.status(500).json({ message: parseMessageI18n("error_server", req) });
     }
 };
+
+export const getItemsLargestAspectRatioByIdOrderController: RequestHandler = async (req, res) => {
+  try {
+    const idOrder = Number(req.params.idOrder || req.body.idOrder);
+    if (!idOrder) {
+      return res.status(400).json({
+        message: parseMessageI18n("missing_idOrder", req),
+      });
+    }
+
+    const data = await repository.getItemsLargestAspectRatioByIdOrder(idOrder);
+
+    res.status(200).json({
+      code: 200,
+      message: parseMessageI18n("items_largest_aspect_ratio_success", req),
+      data,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: parseMessageI18n("error_server", req),
+    });
+  }
+};
+
+export const getItemsLargestVoidVolumeByIdOrderController: RequestHandler = async (req, res) => {
+  try {
+    const idOrder = Number(req.params.idOrder || req.body.idOrder);
+    if (!idOrder) {
+      return res.status(400).json({
+        message: parseMessageI18n("missing_idOrder", req),
+      });
+    }
+
+    const data = await repository.getItemsLargestVoidVolumeByIdOrder(idOrder);
+
+    res.status(200).json({
+      code: 200,
+      message: parseMessageI18n("items_largest_void_volume_success", req),
+      data,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: parseMessageI18n("error_server", req),
+    });
+  }
+};
