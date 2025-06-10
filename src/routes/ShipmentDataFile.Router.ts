@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { downloadExcelTemplateShipmentDataFileController, uploadExcelShipmentDataFileController } from "../controllers/ShipmentDataFile.Controller";
+import { downloadExcelTemplateShipmentDataFileController, getItemsLargestAspectRatioByIdOrderController, uploadExcelShipmentDataFileController } from "../controllers/ShipmentDataFile.Controller";
 
 const shipmentDataFileRouter = Router();
 
@@ -86,5 +86,127 @@ shipmentDataFileRouter.get('/downloadTemplateShipmentDataFile', downloadExcelTem
  *                   type: string
  */
 shipmentDataFileRouter.post('/uploadShipmentDataFile', uploadExcelShipmentDataFileController);
+
+/**
+ * @swagger
+ * /items-largest-aspect-ratio/{idOrder}:
+ *   get:
+ *     summary: Get Top 10 Largest Items by Aspect Ratio
+ *     description: Returns the top 10 largest items (by area = length × width) across up to 5 items per record for a given order ID. Includes aspect ratio (length / width) and source item details.
+ *     tags:
+ *       - Results
+ *     parameters:
+ *       - in: path
+ *         name: idOrder
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID of the order to retrieve items from
+ *     responses:
+ *       200:
+ *         description: List of top 10 largest items with aspect ratio
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       idOrder:
+ *                         type: integer
+ *                       orderId:
+ *                         type: string
+ *                       idShipmenDataFile:
+ *                         type: integer
+ *                       itemNumber:
+ *                         type: string
+ *                       itemLength:
+ *                         type: number
+ *                       itemWidth:
+ *                         type: number
+ *                       itemHeight:
+ *                         type: number
+ *                       itemWeight:
+ *                         type: number
+ *                       aspectRatio:
+ *                         type: number
+ *                       itemArea:
+ *                         type: number
+ *       400:
+ *         description: Missing idOrder or invalid input
+ *       500:
+ *         description: Internal server error
+ */
+shipmentDataFileRouter.get('/items-largest-aspect-ratio/:idOrder', getItemsLargestAspectRatioByIdOrderController);
+
+/**
+ * @swagger
+ * /items-largest-void-volume/{idOrder}:
+ *   get:
+ *     summary: Get Top 10 Items with Largest Boxed Void Volume
+ *     description: Returns the top 10 items with the largest void volume (difference between assigned box volume and item volume) for a given order ID.
+ *     tags:
+ *       - Results
+ *     parameters:
+ *       - in: path
+ *         name: idOrder
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID of the order to retrieve void volume data from
+ *     responses:
+ *       200:
+ *         description: List of top 10 items with largest void volume
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 code:
+ *                   type: integer
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       idOrder:
+ *                         type: integer
+ *                       orderId:
+ *                         type: string
+ *                       idShipmenDataFile:
+ *                         type: integer
+ *                       itemNumber:
+ *                         type: string
+ *                       itemLength:
+ *                         type: number
+ *                       itemWidth:
+ *                         type: number
+ *                       itemHeight:
+ *                         type: number
+ *                       itemWeight:
+ *                         type: number
+ *                       currentAssignedBoxLength:
+ *                         type: number
+ *                       currentAssignedBoxWidth:
+ *                         type: number
+ *                       currentAssignedBoxHeight:
+ *                         type: number
+ *                       voidVolume:
+ *                         type: number
+ *       400:
+ *         description: Missing or invalid idOrder
+ *       500:
+ *         description: Internal server error
+ */
+shipmentDataFileRouter.get('/items-largest-void-volume/:idOrder', getItemsLargestAspectRatioByIdOrderController);
 
 export default shipmentDataFileRouter;
