@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { runEvenDistributionModelController, getResultsByOrderController, runTopFrequenciesModelController, runEvenVolumeModelController, runEvenVolumeDinamicoModelController, existsResultsByOrderController, getValidateResultsByOrderController } from "../controllers/Results.Controller";
+import { runEvenDistributionModelController, getResultsByOrderController, runTopFrequenciesModelController, runEvenVolumeModelController, runEvenVolumeDinamicoModelController, existsResultsByOrderController, getValidateResultsByOrderController, getImprovementController, getBoxDimensionsResultController } from "../controllers/Results.Controller";
 
 const evenDistributionModelRouter = Router();
 
@@ -492,5 +492,116 @@ evenDistributionModelRouter.get("/results/exists", existsResultsByOrderControlle
  *         description: Error interno del servidor
  */
 evenDistributionModelRouter.get("/results/validate", getValidateResultsByOrderController);
+
+/**
+ * @swagger
+ * /model-improvements:
+ *   get:
+ *     tags:
+ *       - Distribution Models
+ *     summary: Get optimization improvement percentages
+ *     description: |
+ *       Returns improvement metrics for an optimization model compared to its current version.
+ *       Models supported: `EvenDistribution`, `TopFrequencies`, `EvenVolumeDynamic`, `EvenVolume`.
+ *     parameters:
+ *       - in: query
+ *         name: idOrder
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: Order ID to analyze.
+ *       - in: query
+ *         name: model
+ *         schema:
+ *           type: string
+ *           enum: [EvenDistribution, TopFrequencies, EvenVolumeDynamic, EvenVolume]
+ *         required: true
+ *         description: Optimization model to evaluate.
+ *     responses:
+ *       200:
+ *         description: Improvement results per box.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: integer
+ *                   boxNumber:
+ *                     type: integer
+ *                   DimensionalWeightImprovement:
+ *                     type: number
+ *                     format: float
+ *                   EstimatedTotalFreightImprovement:
+ *                     type: number
+ *                     format: float
+ *                   VoidVolumeImprovement:
+ *                     type: number
+ *                     format: float
+ *                   VoidFillCostImprovement:
+ *                     type: number
+ *                     format: float
+ *                   CorrugateAreaImprovement:
+ *                     type: number
+ *                     format: float
+ *                   CorrugateCostImprovement:
+ *                     type: number
+ *                     format: float
+ *       400:
+ *         description: Missing required parameters.
+ *       500:
+ *         description: Server error.
+ */
+evenDistributionModelRouter.get("/model-improvements", getImprovementController);
+
+/**
+ * @swagger
+ * /box-dimensions-result:
+ *   get:
+ *     tags:
+ *       - Distribution Models
+ *     summary: Get box dimensions by order and model
+ *     description: Returns distinct box dimensions used in a given optimization model.
+ *     parameters:
+ *       - in: query
+ *         name: idOrder
+ *         schema:
+ *           type: integer
+ *         required: true
+ *         description: Order ID to filter by.
+ *       - in: query
+ *         name: model
+ *         schema:
+ *           type: string
+ *           enum: [EvenDistribution, TopFrequencies, EvenVolumeDynamic, EvenVolume]
+ *         required: true
+ *         description: Model name to filter by.
+ *     responses:
+ *       200:
+ *         description: List of box dimensions
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   boxLength:
+ *                     type: number
+ *                     format: float
+ *                   boxWidth:
+ *                     type: number
+ *                     format: float
+ *                   boxHeight:
+ *                     type: number
+ *                     format: float
+ *       400:
+ *         description: Missing required parameters.
+ *       500:
+ *         description: Server error.
+ */
+evenDistributionModelRouter.get("/box-dimensions-result", getBoxDimensionsResultController);
 
 export default evenDistributionModelRouter;

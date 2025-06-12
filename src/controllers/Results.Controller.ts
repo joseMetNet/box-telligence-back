@@ -140,3 +140,50 @@ export const getValidateResultsByOrderController: RequestHandler = async (req, r
     res.status(500).json({ message: parseMessageI18n("error_server", req) });
   }
 };
+
+export const getImprovementController: RequestHandler = async (req, res) => {
+  try {
+    const { idOrder, model } = req.query;
+
+    if (!idOrder || !model) {
+      return res.status(400).json({ message: "Missing idOrder or model" });
+    }
+
+    const allowedModels = ["EvenDistribution", "TopFrequencies", "EvenVolumeDynamic", "EvenVolume"] as const;
+    type ModelType = typeof allowedModels[number];
+
+    if (!allowedModels.includes(model as ModelType)) {
+      return res.status(400).json({ message: "Invalid model type" });
+    }
+
+    const improvements = await repository.getModelImprovementByIdOrder(
+      Number(idOrder),
+      model as ModelType
+    );
+    res.status(200).json(improvements);
+  } catch (err: any) {
+    res.status(500).json({ message: "error_server", error: err.message });
+  }
+};
+
+export const getBoxDimensionsResultController: RequestHandler = async (req, res) => {
+  try {
+    const { idOrder, model } = req.query;
+
+    if (!idOrder || !model) {
+      return res.status(400).json({ message: "Missing idOrder or model" });
+    }
+
+    const boxes = await repository.getBoxDimensionsByOrderAndModel(
+      Number(idOrder),
+      String(model) as any
+    );
+
+    res.status(200).json(boxes);
+  } catch (err: any) {
+    res.status(500).json({
+      message: "error_server",
+      error: err.message,
+    });
+  }
+};
