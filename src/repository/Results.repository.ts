@@ -1011,3 +1011,93 @@ async function executeEvenVolumeDinamico(
   }
 }
 
+export const getModelImprovementByIdOrder = async (
+  idOrder: number,
+  model: "EvenDistribution" | "TopFrequencies" | "EvenVolumeDynamic" | "EvenVolume"
+) => {
+  const db = await connectToSqlServer();
+
+  // Construir el nombre del modelo actual
+  const currentModel = `Current${model}`;
+
+  // Obtener los datos del modelo optimizado
+  const optimizedResult: any = await db?.request()
+    .input("idOrder", idOrder)
+    .input("model", model)
+    .query(`
+      SELECT * FROM TB_Results
+      WHERE idOrder = @idOrder AND model = @model
+    `);
+
+  if (!optimizedResult.recordset.length) {
+    throw new Error(`No optimized results found for model: ${model}`);
+  }
+
+  // Obtener los datos del modelo actual
+  const currentResult: any = await db?.request()
+    .input("idOrder", idOrder)
+    .input("model", currentModel)
+    .query(`
+      SELECT * FROM TB_Results
+      WHERE idOrder = @idOrder AND model = @model
+      ORDER BY id ASC
+    `);
+
+  if (!currentResult.recordset.length) {
+    throw new Error(`No current results found for model: ${currentModel}`);
+  }
+
+  const currentWeights = currentResult.recordset.map((r: any) => r.newBillableWeight);
+  const currentFreights = currentResult.recordset.map((r: any) => r.newFreightCost);
+  const currentVoidVolumes = currentResult.recordset.map((r: any) => r.newVoidVolume);
+  const currentVoidFillCosts = currentResult.recordset.map((r: any) => r.newVoidFillCost);
+  const currentCorrugateAreas = currentResult.recordset.map((r: any) => r.newBoxCorrugateArea);
+  const currentCorrugateCosts = currentResult.recordset.map((r: any) => r.newBoxCorrugateCost);
+
+  const improvements = optimizedResult.recordset.map((opt: any, idx: number) => {
+    return {
+      id: opt.id,
+      boxNumber: opt.boxNumber,
+      DimensionalWeightImprovement:
+        currentWeights[idx] > 0 ? 1 - (opt.newBillableWeight / currentWeights[idx]) : 0,
+      EstimatedTotalFreightImprovement:
+        currentFreights[idx] > 0 ? 1 - (opt.newFreightCost / currentFreights[idx]) : 0,
+      VoidVolumeImprovement:
+        currentVoidVolumes[idx] > 0 ? 1 - (opt.newVoidVolume / currentVoidVolumes[idx]) : 0,
+      VoidFillCostImprovement:
+        currentVoidFillCosts[idx] > 0 ? 1 - (opt.newVoidFillCost / currentVoidFillCosts[idx]) : 0,
+      CorrugateAreaImprovement:
+        currentCorrugateAreas[idx] > 0 ? 1 - (opt.newBoxCorrugateArea / currentCorrugateAreas[idx]) : 0,
+      CorrugateCostImprovement:
+        currentCorrugateCosts[idx] > 0 ? 1 - (opt.newBoxCorrugateCost / currentCorrugateCosts[idx]) : 0,
+    };
+  });
+
+  return improvements;
+};
+
+export const getBoxDimensionsByOrderAndModel = async (
+  idOrder: number,
+  model:
+    | "EvenDistribution"
+    | "TopFrequencies"
+    | "EvenVolumeDynamic"
+    | "EvenVolume"
+) => {
+  const db = await connectToSqlServer();
+
+  const result: any = await db?.request()
+    .input("idOrder", idOrder)
+    .input("model", model)
+    .query(`
+      SELECT DISTINCT
+        CAST(boxLength AS FLOAT) AS boxLength,
+        CAST(boxWidth AS FLOAT) AS boxWidth,
+        CAST(boxHeight AS FLOAT) AS boxHeight
+      FROM TB_KitBoxes
+      WHERE idOrder = @idOrder AND model = @model
+      ORDER BY boxLength DESC, boxWidth DESC, boxHeight DESC
+    `);
+
+  return result.recordset;
+};
