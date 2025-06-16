@@ -1124,7 +1124,7 @@ export const getBoxDimensionsByOrderAndModel = async (
     .input("idOrder", idOrder)
     .input("model", model)
     .query(`
-      SELECT DISTINCT
+      SELECT DISTINCT boxLabel,
         CAST(boxLength AS FLOAT) AS boxLength,
         CAST(boxWidth AS FLOAT) AS boxWidth,
         CAST(boxHeight AS FLOAT) AS boxHeight
