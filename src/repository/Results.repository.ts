@@ -63,9 +63,25 @@ export const getResultsByOrder = async (
     `);
   const models = modelsResult.recordset.map((row: any) => row.model);
 
+  // Filtrar solo los modelos permitidos
+  const allowedModels = [
+    'EvenDistribution',
+    'EvenVolume',
+    'EvenVolumeDynamic',
+    'TopFrequencies',
+  ];
+  const filteredModels = models.filter((m: string) => allowedModels.includes(m));
+
   // 2. Para cada modelo, obtener paginado y summary
   const modelGroups = [];
-  for (const model of models) {
+  // Mapeo de modelos a currentModel
+  const modelMap: Record<string, string> = {
+    EvenDistribution: 'CurrentEvenDistribution',
+    EvenVolume: 'CurrentEvenVolume',
+    EvenVolumeDynamic: 'CurrentEvenVolumeDynamic',
+    TopFrequencies: 'CurrentTopFrequencies',
+  };
+  for (const model of filteredModels) {
     // a) Paginación de boxNumbers únicos para este modelo
     const boxNumbersResult = await db
       .request()
@@ -135,7 +151,22 @@ export const getResultsByOrder = async (
       { label: 'Maximum Number of Boxes to Analyze', value: maxBoxNumber }
     ];
 
-    modelGroups.push({
+    // Obtener resultados del modelo Current... correspondiente
+    let currentResults: any[] = [];
+    const currentModelName = modelMap[model];
+    if (currentModelName) {
+      const currentResultsQuery = await db.request()
+        .input("idOrder", idOrder)
+        .input("model", currentModelName)
+        .query(`
+          SELECT *
+          FROM TB_Results
+          WHERE idOrder = @idOrder AND model = @model
+        `);
+      currentResults = currentResultsQuery.recordset;
+    }
+
+    const groupObj: any = {
       model,
       results,
       boxNumbers,
@@ -147,7 +178,12 @@ export const getResultsByOrder = async (
       totalBoxesUsed,
       minBoxNumber,
       maxBoxNumber,
-    });
+    };
+    // Agregar la propiedad dinámica con los resultados del modelo Current...
+    if (currentModelName) {
+      groupObj[currentModelName] = currentResults;
+    }
+    modelGroups.push(groupObj);
   }
 
   return { models: modelGroups };
@@ -582,8 +618,6 @@ async function executeTopFrequenciesModel(
           )
         `);
     }
-
-    startIdx = endIdx + 1;
   }
 }
 
