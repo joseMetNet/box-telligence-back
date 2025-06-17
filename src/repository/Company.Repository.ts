@@ -475,48 +475,66 @@ export const getCompanyFileDetailsByDate = async (data: { id: number, fileType: 
 };
 
 export const deleteFileCompany = async (data: { id: number, fileType: string | "Box Kit File" | "Shipment Data File" }): Promise<IresponseRepositoryService> => {
-    try {
-        const { id, fileType } = data;
-        const db = await connectToSqlServer();
+  try {
+    const { id, fileType } = data;
+    const db = await connectToSqlServer();
 
-        let query = "";
+    const resultsExist: any = await db?.request()
+      .input("idOrder", id)
+      .query(`
+        SELECT TOP 1 id
+        FROM TB_Results
+        WHERE idOrder = @idOrder
+      `);
 
-        if (fileType === "Box Kit File") {
-            query = `DELETE FROM TB_BoxKitFile WHERE idOrder = @id`;
-        } else if (fileType === "Shipment Data File") {
-            query = `DELETE FROM TB_ShipmentDataFile WHERE idOrder = @id`;
-        } else {
-            return {
-                code: 400,
-                message: { translationKey: "company.invalid_file_type", translationParams: { name: "deleteFileCompany" } },
-            };
-        }
-
-        const result = await db?.request()
-            .input('id', id)
-            .query(query);
-
-        const rowsAffected = result?.rowsAffected?.[0] || 0;
-
-        if (rowsAffected > 0) {
-            return {
-                code: 200,
-                message: { translationKey: "company.successful", translationParams: { name: "deleteFileCompany" } },
-            };
-        } else {
-            return {
-                code: 404,
-                message: { translationKey: "company.notFound", translationParams: { name: "deleteFileCompany" } },
-            };
-        }
-
-    } catch (err) {
-        console.error("Error deleting file company:", err);
-        return {
-            code: 400,
-            message: { translationKey: "company.error_server", translationParams: { name: "deleteFileCompany" } },
-        };
+    if (resultsExist.recordset.length > 0) {
+      return {
+        code: 400,
+        message: {
+          translationKey: "This data already has results. It cannot be deleted.",
+          translationParams: { name: "deleteFileCompany" }
+        },
+      };
     }
+
+    let query = "";
+
+    if (fileType === "Box Kit File") {
+      query = `DELETE FROM TB_BoxKitFile WHERE idOrder = @id`;
+    } else if (fileType === "Shipment Data File") {
+      query = `DELETE FROM TB_ShipmentDataFile WHERE idOrder = @id`;
+    } else {
+      return {
+        code: 400,
+        message: { translationKey: "company.invalid_file_type", translationParams: { name: "deleteFileCompany" } },
+      };
+    }
+
+    const result = await db?.request()
+      .input('id', id)
+      .query(query);
+
+    const rowsAffected = result?.rowsAffected?.[0] || 0;
+
+    if (rowsAffected > 0) {
+      return {
+        code: 200,
+        message: { translationKey: "company.successful", translationParams: { name: "deleteFileCompany" } },
+      };
+    } else {
+      return {
+        code: 404,
+        message: { translationKey: "company.notFound", translationParams: { name: "deleteFileCompany" } },
+      };
+    }
+
+  } catch (err) {
+    console.error("Error deleting file company:", err);
+    return {
+      code: 400,
+      message: { translationKey: "company.error_server", translationParams: { name: "deleteFileCompany" } },
+    };
+  }
 };
 
 const createOrder = async (db: any, idCompany: number): Promise<number> => {
