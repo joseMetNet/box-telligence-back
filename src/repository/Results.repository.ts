@@ -44,6 +44,151 @@ import { ShipmentItem, IResultsPaginated, IResult } from "../interface/Results.I
 //   };
 // };
 
+// export const getResultsByOrder = async (
+//   idOrder: number,
+//   page: number = 1,
+//   pageSize: number = 10
+// ): Promise<IResultsPaginated> => {
+//   const db = await connectToSqlServer();
+//   if (!db) throw new Error("No se pudo conectar a la base de datos");
+
+//   // 1. Obtener los modelos distintos para la orden
+//   const modelsResult = await db
+//     .request()
+//     .input("idOrder", idOrder)
+//     .query(`
+//       SELECT DISTINCT model
+//       FROM TB_Results
+//       WHERE idOrder = @idOrder
+//     `);
+//   const models = modelsResult.recordset.map((row: any) => row.model);
+
+//   // Filtrar solo los modelos permitidos
+//   const allowedModels = [
+//     'EvenDistribution',
+//     'EvenVolume',
+//     'EvenVolumeDynamic',
+//     'TopFrequencies',
+//   ];
+//   const filteredModels = models.filter((m: string) => allowedModels.includes(m));
+
+//   // 2. Para cada modelo, obtener paginado y summary
+//   const modelGroups = [];
+//   // Mapeo de modelos a currentModel
+//   const modelMap: Record<string, string> = {
+//     EvenDistribution: 'CurrentEvenDistribution',
+//     EvenVolume: 'CurrentEvenVolume',
+//     EvenVolumeDynamic: 'CurrentEvenVolumeDynamic',
+//     TopFrequencies: 'CurrentTopFrequencies',
+//   };
+//   for (const model of filteredModels) {
+//     // a) Paginación de boxNumbers únicos para este modelo
+//     const boxNumbersResult = await db
+//       .request()
+//       .input("idOrder", idOrder)
+//       .input("model", model)
+//       .input("pageSize", pageSize)
+//       .input("offset", (page - 1) * pageSize)
+//       .query(`
+//         SELECT DISTINCT boxNumber
+//         FROM TB_Results
+//         WHERE idOrder = @idOrder AND model = @model
+//         ORDER BY boxNumber
+//         OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+//       `);
+//     const boxNumbers = boxNumbersResult.recordset.map((row: any) => row.boxNumber);
+
+//     // b) Total de boxNumbers únicos para este modelo
+//     const totalBoxNumbersResult = await db
+//       .request()
+//       .input("idOrder", idOrder)
+//       .input("model", model)
+//       .query(`
+//         SELECT COUNT(DISTINCT boxNumber) as total
+//         FROM TB_Results
+//         WHERE idOrder = @idOrder AND model = @model
+//       `);
+//     const total = totalBoxNumbersResult.recordset[0]?.total || 0;
+
+//     // c) Traer todos los registros de esos boxNumber para este modelo
+//     let results: any[] = [];
+//     if (boxNumbers.length > 0) {
+//       const inClause = boxNumbers.map((_, i) => `@boxNumber${i}`).join(',');
+//       const request = db.request().input("idOrder", idOrder).input("model", model);
+//       boxNumbers.forEach((num, i) => request.input(`boxNumber${i}`, num));
+//       const resultsQuery = await request.query(`
+//         SELECT r.*, s.orderId, s.item1Length, s.item1Width, s.item1Height, s.item1Weight,
+//                s.item2Length, s.item2Width, s.item2Height, s.item2Weight,
+//                s.item3Length, s.item3Width, s.item3Height, s.item3Weight,
+//                s.item4Length, s.item4Width, s.item4Height, s.item4Weight,
+//                s.item5Length, s.item5Width, s.item5Height, s.item5Weight
+//         FROM TB_Results r
+//         LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
+//         WHERE r.idOrder = @idOrder AND r.model = @model
+//           AND r.boxNumber IN (${inClause})
+//         ORDER BY r.boxNumber, r.id
+//       `);
+//       results = resultsQuery.recordset;
+//     }
+
+//     // d) Obtener summaryCards y stats para este modelo
+//     const statsResult = await db
+//       .request()
+//       .input("idOrder", idOrder)
+//       .input("model", model)
+//       .query(`
+//         SELECT 
+//               currentBoxUsed as totalBoxesUsed, 
+//               minimunNumBox as minBoxNumber, 
+//               maximunNumBox as maxBoxNumber
+//               FROM TB_AttributeData
+//         WHERE idOrder = @idOrder 
+//       `);
+//     const { totalBoxesUsed, minBoxNumber, maxBoxNumber } = statsResult.recordset[0] || { totalBoxesUsed: 0, minBoxNumber: null, maxBoxNumber: null };
+//     const summaryCards = [
+//       { label: 'Current Number of Boxes Used', value: totalBoxesUsed },
+//       { label: 'Minimum Number of Boxes to Analyze', value: minBoxNumber },
+//       { label: 'Maximum Number of Boxes to Analyze', value: maxBoxNumber }
+//     ];
+
+//     // Obtener resultados del modelo Current... correspondiente
+//     let currentResults: any[] = [];
+//     const currentModelName = modelMap[model];
+//     if (currentModelName) {
+//       const currentResultsQuery = await db.request()
+//         .input("idOrder", idOrder)
+//         .input("model", currentModelName)
+//         .query(`
+//           SELECT *
+//           FROM TB_Results
+//           WHERE idOrder = @idOrder AND model = @model
+//         `);
+//       currentResults = currentResultsQuery.recordset;
+//     }
+
+//     const groupObj: any = {
+//       model,
+//       results,
+//       boxNumbers,
+//       total,
+//       page,
+//       pageSize,
+//       totalPages: Math.ceil(total / pageSize),
+//       summaryCards,
+//       totalBoxesUsed,
+//       minBoxNumber,
+//       maxBoxNumber,
+//     };
+//     // Agregar la propiedad dinámica con los resultados del modelo Current...
+//     if (currentModelName) {
+//       groupObj[currentModelName] = currentResults;
+//     }
+//     modelGroups.push(groupObj);
+//   }
+
+//   return { models: modelGroups };
+// };
+
 export const getResultsByOrder = async (
   idOrder: number,
   page: number = 1,
@@ -52,7 +197,7 @@ export const getResultsByOrder = async (
   const db = await connectToSqlServer();
   if (!db) throw new Error("No se pudo conectar a la base de datos");
 
-  // 1. Obtener los modelos distintos para la orden
+  // 1. Obtener todos los modelos disponibles en TB_Results para el idOrder
   const modelsResult = await db
     .request()
     .input("idOrder", idOrder)
@@ -61,100 +206,116 @@ export const getResultsByOrder = async (
       FROM TB_Results
       WHERE idOrder = @idOrder
     `);
-  const models = modelsResult.recordset.map((row: any) => row.model);
 
-  // Filtrar solo los modelos permitidos
+  const allModels = modelsResult.recordset.map((row: any) => row.model);
+
   const allowedModels = [
     'EvenDistribution',
     'EvenVolume',
     'EvenVolumeDynamic',
     'TopFrequencies',
   ];
-  const filteredModels = models.filter((m: string) => allowedModels.includes(m));
 
-  // 2. Para cada modelo, obtener paginado y summary
-  const modelGroups = [];
-  // Mapeo de modelos a currentModel
-  const modelMap: Record<string, string> = {
+  const currentModels: any = {
     EvenDistribution: 'CurrentEvenDistribution',
     EvenVolume: 'CurrentEvenVolume',
     EvenVolumeDynamic: 'CurrentEvenVolumeDynamic',
     TopFrequencies: 'CurrentTopFrequencies',
   };
+
+  const filteredModels = allowedModels.filter(
+    (m) => allModels.includes(m) || allModels.includes(currentModels[m])
+  );
+
+  const modelGroups = [];
+
   for (const model of filteredModels) {
-    // a) Paginación de boxNumbers únicos para este modelo
-    const boxNumbersResult = await db
-      .request()
-      .input("idOrder", idOrder)
-      .input("model", model)
-      .input("pageSize", pageSize)
-      .input("offset", (page - 1) * pageSize)
-      .query(`
-        SELECT DISTINCT boxNumber
-        FROM TB_Results
-        WHERE idOrder = @idOrder AND model = @model
-        ORDER BY boxNumber
-        OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
-      `);
-    const boxNumbers = boxNumbersResult.recordset.map((row: any) => row.boxNumber);
+    const modelExists = allModels.includes(model);
+    const currentModelName = currentModels[model];
+    const currentModelExists = allModels.includes(currentModelName);
 
-    // b) Total de boxNumbers únicos para este modelo
-    const totalBoxNumbersResult = await db
-      .request()
-      .input("idOrder", idOrder)
-      .input("model", model)
-      .query(`
-        SELECT COUNT(DISTINCT boxNumber) as total
-        FROM TB_Results
-        WHERE idOrder = @idOrder AND model = @model
-      `);
-    const total = totalBoxNumbersResult.recordset[0]?.total || 0;
-
-    // c) Traer todos los registros de esos boxNumber para este modelo
+    let boxNumbers: number[] = [];
     let results: any[] = [];
-    if (boxNumbers.length > 0) {
-      const inClause = boxNumbers.map((_, i) => `@boxNumber${i}`).join(',');
-      const request = db.request().input("idOrder", idOrder).input("model", model);
-      boxNumbers.forEach((num, i) => request.input(`boxNumber${i}`, num));
-      const resultsQuery = await request.query(`
-        SELECT r.*, s.orderId, s.item1Length, s.item1Width, s.item1Height, s.item1Weight,
-               s.item2Length, s.item2Width, s.item2Height, s.item2Weight,
-               s.item3Length, s.item3Width, s.item3Height, s.item3Weight,
-               s.item4Length, s.item4Width, s.item4Height, s.item4Weight,
-               s.item5Length, s.item5Width, s.item5Height, s.item5Weight
-        FROM TB_Results r
-        LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
-        WHERE r.idOrder = @idOrder AND r.model = @model
-          AND r.boxNumber IN (${inClause})
-        ORDER BY r.boxNumber, r.id
-      `);
-      results = resultsQuery.recordset;
+    let total = 0;
+
+    if (modelExists) {
+      // Obtener boxNumbers únicos paginados
+      const boxNumbersResult = await db
+        .request()
+        .input("idOrder", idOrder)
+        .input("model", model)
+        .input("pageSize", pageSize)
+        .input("offset", (page - 1) * pageSize)
+        .query(`
+          SELECT DISTINCT boxNumber
+          FROM TB_Results
+          WHERE idOrder = @idOrder AND model = @model
+          ORDER BY boxNumber
+          OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+        `);
+
+      boxNumbers = boxNumbersResult.recordset.map((row: any) => row.boxNumber);
+
+      const totalBoxNumbersResult = await db
+        .request()
+        .input("idOrder", idOrder)
+        .input("model", model)
+        .query(`
+          SELECT COUNT(DISTINCT boxNumber) as total
+          FROM TB_Results
+          WHERE idOrder = @idOrder AND model = @model
+        `);
+
+      total = totalBoxNumbersResult.recordset[0]?.total || 0;
+
+      // Traer resultados de esos boxNumbers
+      if (boxNumbers.length > 0) {
+        const inClause = boxNumbers.map((_, i) => `@boxNumber${i}`).join(',');
+        const request = db.request()
+          .input("idOrder", idOrder)
+          .input("model", model);
+        boxNumbers.forEach((num, i) => request.input(`boxNumber${i}`, num));
+
+        const resultsQuery = await request.query(`
+          SELECT r.*, s.orderId, s.item1Length, s.item1Width, s.item1Height, s.item1Weight,
+                 s.item2Length, s.item2Width, s.item2Height, s.item2Weight,
+                 s.item3Length, s.item3Width, s.item3Height, s.item3Weight,
+                 s.item4Length, s.item4Width, s.item4Height, s.item4Weight,
+                 s.item5Length, s.item5Width, s.item5Height, s.item5Weight
+          FROM TB_Results r
+          LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
+          WHERE r.idOrder = @idOrder AND r.model = @model
+            AND r.boxNumber IN (${inClause})
+          ORDER BY r.boxNumber, r.id
+        `);
+        results = resultsQuery.recordset;
+      }
     }
 
-    // d) Obtener summaryCards y stats para este modelo
+    // Stats de attributeData (siempre se consultan si existe la orden)
     const statsResult = await db
       .request()
       .input("idOrder", idOrder)
-      .input("model", model)
       .query(`
         SELECT 
               currentBoxUsed as totalBoxesUsed, 
               minimunNumBox as minBoxNumber, 
               maximunNumBox as maxBoxNumber
-              FROM TB_AttributeData
+        FROM TB_AttributeData
         WHERE idOrder = @idOrder 
       `);
+
     const { totalBoxesUsed, minBoxNumber, maxBoxNumber } = statsResult.recordset[0] || { totalBoxesUsed: 0, minBoxNumber: null, maxBoxNumber: null };
+
     const summaryCards = [
       { label: 'Current Number of Boxes Used', value: totalBoxesUsed },
       { label: 'Minimum Number of Boxes to Analyze', value: minBoxNumber },
       { label: 'Maximum Number of Boxes to Analyze', value: maxBoxNumber }
     ];
 
-    // Obtener resultados del modelo Current... correspondiente
+    // Obtener resultados del modelo Current...
     let currentResults: any[] = [];
-    const currentModelName = modelMap[model];
-    if (currentModelName) {
+    if (currentModelExists) {
       const currentResultsQuery = await db.request()
         .input("idOrder", idOrder)
         .input("model", currentModelName)
@@ -166,7 +327,7 @@ export const getResultsByOrder = async (
       currentResults = currentResultsQuery.recordset;
     }
 
-    const groupObj: any = {
+    modelGroups.push({
       model,
       results,
       boxNumbers,
@@ -178,16 +339,13 @@ export const getResultsByOrder = async (
       totalBoxesUsed,
       minBoxNumber,
       maxBoxNumber,
-    };
-    // Agregar la propiedad dinámica con los resultados del modelo Current...
-    if (currentModelName) {
-      groupObj[currentModelName] = currentResults;
-    }
-    modelGroups.push(groupObj);
+      [currentModelName]: currentResults,
+    });
   }
 
   return { models: modelGroups };
 };
+
 
 export const existsResultsByOrder = async (idOrder: number): Promise<1 | 0> => {
   const db = await connectToSqlServer();

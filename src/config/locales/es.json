@@ -28,7 +28,8 @@
 		"emptyResponse": "No se encontraron clientes",
 		"notFound": "No se encontro el cliente",
 		"invalid_file_type": "tipo de archivo invalido",
-		"invalid_id": "El id no es valido"
+		"invalid_id": "El id no es valido",
+		"data_has_results": "company.data_has_results"
 	},
 	"user": {
 		"created": "Ok",
@@ -70,5 +71,6 @@
 	},
 	"top_frecuencies_completed": "top_frecuencies_completed",
 	"even_Volume_completed": "even_Volume_completed",
-	"items_largest_aspect_ratio_success": "items_largest_aspect_ratio_success"
+	"items_largest_aspect_ratio_success": "items_largest_aspect_ratio_success",
+	"This data already has results. It cannot be deleted.": "This data already has results. It cannot be deleted."
 }
