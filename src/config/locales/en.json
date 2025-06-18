@@ -40,7 +40,7 @@
 		"error_server": "An error occurred on the server"
 	},
 	"excel": {
-		"template_generated": "Excel template generated",	
+		"template_generated": "Excel template generated",
 		"error_server": "An error occurred on the server",
 		"error_empty_file": "The file does not have data",
 		"templateFileNotFound": "The file is not the BoxKitFile.xlsx with the BoxKitFile sheet",
@@ -62,5 +62,8 @@
 	"attributeData": {
 		"error_creating": "An error occurred while creating",
 		"created": "Ok"
+	},
+	"results": {
+		"found": "results.found"
 	}
 }
