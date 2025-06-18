@@ -20,6 +20,7 @@ import shipmentDataFileRouter from "../routes/ShipmentDataFile.Router";
 import attributeDataRouter from "../routes/AttributeData.Router";
 import modelDataRouter from "../routes/ModelData.Router";
 import evenDistributionModelRouter from "../routes/Results.Router";
+import resultsDownloadExcelRouter from "../routes/ResultsDownloadExcel.Router";
 
 class Server {
   private app: Application;
@@ -105,6 +106,7 @@ class Server {
     this.app.use(this.path.url, modelDataRouter);
     // this.app.use(this.path.url, attributeDataRouter);
     this.app.use(this.path.url, evenDistributionModelRouter);
+    this.app.use(this.path.url, resultsDownloadExcelRouter);
   }
   
   listen() {
