@@ -186,8 +186,21 @@ export const runEvenVolumeDinamicoModel = async (idOrder: number) => {
     SELECT * FROM TB_ShipmentDataFile WHERE idOrder = @idOrder ORDER BY cubedItemLength DESC
   `);
   if (!itemsResult?.recordset?.length) throw new Error("No shipment data found for this order");
-  const items: ShipmentItem[] = itemsResult.recordset;
 
+  // const items: ShipmentItem[] = itemsResult.recordset; //descomentar si hay problemas con la normalización
+
+  // ----
+  // Normalizar ítems si no están normalizados
+  const row = itemsResult.recordset[0];
+  const isNormalized = row.cubedItemLength !== null && row.cubedItemLength !== undefined;
+
+  const items: ShipmentItem[] = isNormalized
+    ? itemsResult.recordset
+    : itemsResult.recordset.flatMap(applyAABBHeuristic);
+
+  if (!items.length) throw new Error("No valid items found for processing");
+
+// ----
   const attrDataResult = await db.request().input("idOrder", idOrder).query(`
     SELECT * FROM TB_AttributeData WHERE idOrder = @idOrder
   `);
