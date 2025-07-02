@@ -34,7 +34,8 @@
 	"user": {
 		"created": "Ok",
 		"error_server": "Ocurrio un error en el servidor",
-		"required_field_text": "Este campo es requerido"
+		"required_field_text": "Este campo es requerido",
+		"updated": "user.updated"
 	},
 	"boxDimension": {
 		"found": "Ok",
