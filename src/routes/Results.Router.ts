@@ -550,7 +550,7 @@ evenDistributionModelRouter.get("/results/validate", getValidateResultsByOrderCo
  *                     type: number
  *                     format: float
  *       400:
- *         description: Missing required parameters.
+ *         description: Missing required parameters or invalid values.
  *       500:
  *         description: Server error.
  */
@@ -578,6 +578,12 @@ evenDistributionModelRouter.get("/model-improvements", getImprovementController)
  *           enum: [EvenDistribution, TopFrequencies, EvenVolumeDynamic, EvenVolume]
  *         required: true
  *         description: Model name to filter by.
+ *       - in: query
+ *         name: numBoxes
+ *         schema:
+ *           type: integer
+ *         required: false
+ *         description: Optional filter by number of boxes (numBoxes).
  *     responses:
  *       200:
  *         description: List of box dimensions
@@ -588,6 +594,8 @@ evenDistributionModelRouter.get("/model-improvements", getImprovementController)
  *               items:
  *                 type: object
  *                 properties:
+ *                   boxLabel:
+ *                     type: string
  *                   boxLength:
  *                     type: number
  *                     format: float
