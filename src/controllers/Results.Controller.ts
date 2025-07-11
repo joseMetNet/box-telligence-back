@@ -168,7 +168,7 @@ export const getImprovementController: RequestHandler = async (req, res) => {
 
 export const getBoxDimensionsResultController: RequestHandler = async (req, res) => {
   try {
-    const { idOrder, model } = req.query;
+    const { idOrder, model, numBoxes  } = req.query;
 
     if (!idOrder || !model) {
       return res.status(400).json({ message: "Missing idOrder or model" });
@@ -176,7 +176,8 @@ export const getBoxDimensionsResultController: RequestHandler = async (req, res)
 
     const boxes = await repository.getBoxDimensionsByOrderAndModel(
       Number(idOrder),
-      String(model) as any
+      String(model) as any,
+       numBoxes !== undefined ? Number(numBoxes) : undefined
     );
 
     res.status(200).json(boxes);

@@ -447,8 +447,6 @@ export const getModelImprovementByIdOrder = async (
   model: "EvenDistribution" | "TopFrequencies" | "EvenVolumeDynamic" | "EvenVolume"
 ) => {
   const db = await connectToSqlServer();
-
-  // Construir el nombre del modelo actual
   const currentModel = `Current${model}`;
 
   // Obtener los datos del modelo optimizado
@@ -513,37 +511,50 @@ export const getBoxDimensionsByOrderAndModel = async (
     | "EvenDistribution"
     | "TopFrequencies"
     | "EvenVolumeDynamic"
-    | "EvenVolume"
+    | "EvenVolume",
+  numBoxes?: number
 ) => {
   const db = await connectToSqlServer();
 
-  let result = await db?.request()
+  const numBoxesCondition = numBoxes !== undefined ? " AND numBoxes = @numBoxes" : "";
+
+  let request = db?.request()
     .input("idOrder", idOrder)
-    .input("model", model)
-    .query(`
+    .input("model", model);
+
+  if (numBoxes !== undefined) {
+    request?.input("numBoxes", numBoxes);
+  }
+
+  let result = await request?.query(`
+    SELECT DISTINCT boxLabel,
+      CAST(boxLength AS FLOAT) AS boxLength,
+      CAST(boxWidth AS FLOAT) AS boxWidth,
+      CAST(boxHeight AS FLOAT) AS boxHeight
+    FROM TB_KitBoxes
+    WHERE idOrder = @idOrder AND model = @model${numBoxesCondition}
+    ORDER BY boxLength DESC, boxWidth DESC, boxHeight DESC
+  `);
+
+  if (!result?.recordset?.length) {
+    const currentModel = `Current${model}`;
+    let currentRequest = db?.request()
+      .input("idOrder", idOrder)
+      .input("model", currentModel);
+
+    if (numBoxes !== undefined) {
+      currentRequest?.input("numBoxes", numBoxes);
+    }
+
+    result = await currentRequest?.query(`
       SELECT DISTINCT boxLabel,
         CAST(boxLength AS FLOAT) AS boxLength,
         CAST(boxWidth AS FLOAT) AS boxWidth,
         CAST(boxHeight AS FLOAT) AS boxHeight
       FROM TB_KitBoxes
-      WHERE idOrder = @idOrder AND model = @model
+      WHERE idOrder = @idOrder AND model = @model${numBoxesCondition}
       ORDER BY boxLength DESC, boxWidth DESC, boxHeight DESC
     `);
-
-  if (!result?.recordset?.length) {
-    const currentModel = `Current${model}`;
-    result = await db?.request()
-      .input("idOrder", idOrder)
-      .input("model", currentModel)
-      .query(`
-        SELECT DISTINCT boxLabel,
-          CAST(boxLength AS FLOAT) AS boxLength,
-          CAST(boxWidth AS FLOAT) AS boxWidth,
-          CAST(boxHeight AS FLOAT) AS boxHeight
-        FROM TB_KitBoxes
-        WHERE idOrder = @idOrder AND model = @model
-        ORDER BY boxLength DESC, boxWidth DESC, boxHeight DESC
-      `);
   }
 
   return result?.recordset || [];
