@@ -595,7 +595,7 @@ export const getBoxDimensionsByOrderAndModel = async (
   }
 
   let result = await request?.query(`
-    SELECT DISTINCT boxLabel,
+    SELECT DISTINCT boxLabel, model, boxNumber,
       CAST(boxLength AS FLOAT) AS boxLength,
       CAST(boxWidth AS FLOAT) AS boxWidth,
       CAST(boxHeight AS FLOAT) AS boxHeight
@@ -615,7 +615,7 @@ export const getBoxDimensionsByOrderAndModel = async (
     }
 
     result = await currentRequest?.query(`
-      SELECT DISTINCT boxLabel,
+      SELECT DISTINCT boxLabel, model, boxNumber,
         CAST(boxLength AS FLOAT) AS boxLength,
         CAST(boxWidth AS FLOAT) AS boxWidth,
         CAST(boxHeight AS FLOAT) AS boxHeight
