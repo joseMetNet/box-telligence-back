@@ -48,8 +48,8 @@ export const getNewCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesPar
 
         const query = `
             WITH OrderedData AS (
-                SELECT 
-                    tbc.id,
+                SELECT
+                    tbc.id AS companyId,
                     tbc.company,
                     tbo.createAt,
                     tbsd.id AS statusDataId,
@@ -69,7 +69,12 @@ export const getNewCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesPar
                 WHERE tbsd.id = 1 AND tbo.createAt > DATEADD(MONTH, -6, GETDATE())
             )
             SELECT 
-                id, company, createAt, percentage, statusData, statusModel
+                companyId AS id,
+                company,
+                createAt,
+                percentage,
+                statusData,
+                statusModel
             FROM OrderedData
             WHERE rn = 1
             ORDER BY createAt DESC
@@ -80,7 +85,7 @@ export const getNewCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesPar
         const countQuery = `
             WITH OrderedData AS (
                 SELECT 
-                    tbc.id,
+                    tbc.id AS companyId,
                     ROW_NUMBER() OVER (PARTITION BY tbc.id ORDER BY tbo.createAt DESC) AS rn
                 FROM TB_Companies AS tbc 
                 LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
@@ -127,34 +132,56 @@ export const getOlderCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesP
         const offset = (page - 1) * limit;
 
         const query = `
-            SELECT DISTINCT tbc.id, tbc.company, tba.currentBoxUsed, tba.createAt,
-            CASE 
-                WHEN tbsd.id = 1 THEN 0
-                WHEN tbsd.id = 2 THEN 50
-                WHEN tbsd.id = 3 THEN 100
-                ELSE NULL
-            END AS percentage,
-            tbsd.status AS statusData,
-            tbsm.status AS statusModel
-            FROM TB_Companies AS tbc  
-            LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
-            LEFT JOIN TB_AttributeData AS tba ON tba.idOrder = tbo.id
-            LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
-            LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
-            WHERE tba.createAt < DATEADD(MONTH, -6, GETDATE())
-            ORDER BY tba.createAt DESC
+            WITH OrderedCompanies AS (
+                SELECT 
+                    tbc.id AS companyId,
+                    tbc.company,
+                    tba.currentBoxUsed,
+                    tba.createAt,
+                    tbsd.id AS idStatusData,
+                    tbsd.status AS statusData,
+                    tbsm.status AS statusModel,
+                    ROW_NUMBER() OVER (PARTITION BY tbc.id ORDER BY tba.createAt DESC) AS rn
+                FROM TB_Companies AS tbc  
+                LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
+                LEFT JOIN TB_AttributeData AS tba ON tba.idOrder = tbo.id
+                LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
+                LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
+                WHERE tba.createAt < DATEADD(MONTH, -6, GETDATE())
+            )
+            SELECT 
+                companyId AS id,
+                company,
+                currentBoxUsed,
+                createAt,
+                CASE 
+                    WHEN idStatusData = 1 THEN 0
+                    WHEN idStatusData = 2 THEN 50
+                    WHEN idStatusData = 3 THEN 100
+                    ELSE NULL
+                END AS percentage,
+                statusData,
+                statusModel
+            FROM OrderedCompanies
+            WHERE rn = 1
+            ORDER BY createAt DESC
             OFFSET ${offset} ROWS
             FETCH NEXT ${limit} ROWS ONLY;
         `;
 
         const countQuery = `
-            SELECT COUNT(*) as total 
-            FROM TB_Companies AS tbc  
-            LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
-            LEFT JOIN TB_AttributeData AS tba ON tba.idOrder = tbo.id
-            LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
-            LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
-            WHERE tba.createAt < DATEADD(MONTH, -6, GETDATE())
+            WITH OrderedCompanies AS (
+                SELECT 
+                    tbc.id AS companyId,
+                    ROW_NUMBER() OVER (PARTITION BY tbc.id ORDER BY tba.createAt DESC) AS rn
+                FROM TB_Companies AS tbc  
+                LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
+                LEFT JOIN TB_AttributeData AS tba ON tba.idOrder = tbo.id
+                LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
+                LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
+                WHERE tba.createAt < DATEADD(MONTH, -6, GETDATE())
+            )
+            SELECT COUNT(*) AS total FROM OrderedCompanies WHERE rn = 1;
         `;
 
         const [dataResult, countResult] = await Promise.all([
@@ -192,30 +219,53 @@ export const getCompanies = async ({ page = 1, limit = 10 }: IGetCompaniesParams
         const offset = (page - 1) * limit;
 
         const query = `
-            SELECT DISTINCT tbc.id, tbc.company, tbo.createAt,
-            CASE 
-                WHEN tbsd.id = 1 THEN 0
-                WHEN tbsd.id = 2 THEN 50
-                WHEN tbsd.id = 3 THEN 100
-                ELSE NULL
-            END AS percentage,
-            tbsd.status AS statusData,
-            tbsm.status AS statusModel
-            FROM TB_Companies AS tbc 
-            LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
-            LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
-            LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
-            WHERE tbsm.id != 2 AND tbsd.id != 1 AND tbo.createAt > DATEADD(MONTH, -6, GETDATE())
-            ORDER BY tbo.createAt DESC
+            WITH OrderedCompanies AS (
+                SELECT 
+                    tbc.id AS companyId,
+                    tbc.company,
+                    tbo.createAt,
+                    tbsd.id AS idStatusData,
+                    tbsd.status AS statusData,
+                    tbsm.status AS statusModel,
+                    ROW_NUMBER() OVER (PARTITION BY tbc.id ORDER BY tbo.createAt DESC) AS rn
+                FROM TB_Companies AS tbc 
+                LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
+                LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
+                LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
+                WHERE tbsm.id != 2 AND tbsd.id != 1 AND tbo.createAt > DATEADD(MONTH, -6, GETDATE())
+            )
+            SELECT 
+                companyId AS id,
+                company,
+                createAt,
+                CASE 
+                    WHEN idStatusData = 1 THEN 0
+                    WHEN idStatusData = 2 THEN 50
+                    WHEN idStatusData = 3 THEN 100
+                    ELSE NULL
+                END AS percentage,
+                statusData,
+                statusModel
+            FROM OrderedCompanies
+            WHERE rn = 1
+            ORDER BY createAt DESC
             OFFSET ${offset} ROWS
             FETCH NEXT ${limit} ROWS ONLY;
         `;
 
-        const countQuery = `SELECT COUNT(*) as total FROM TB_Companies AS tbc 
-            LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
-            LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
-            LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
-            WHERE tbsm.id != 2 AND tbsd.id != 1 AND tbo.createAt > DATEADD(MONTH, -6, GETDATE())`;
+        const countQuery = `
+            WITH OrderedCompanies AS (
+                SELECT 
+                    tbc.id AS companyId,
+                    ROW_NUMBER() OVER (PARTITION BY tbc.id ORDER BY tbo.createAt DESC) AS rn
+                FROM TB_Companies AS tbc 
+                LEFT JOIN TB_Order AS tbo ON tbo.idCompany = tbc.id
+                LEFT JOIN TB_StatusData AS tbsd ON tbsd.id = tbo.idStatusData
+                LEFT JOIN TB_StatusModel AS tbsm ON tbsm.id = tbo.idStatusModel
+                WHERE tbsm.id != 2 AND tbsd.id != 1 AND tbo.createAt > DATEADD(MONTH, -6, GETDATE())
+            )
+            SELECT COUNT(*) AS total FROM OrderedCompanies WHERE rn = 1;
+        `;
 
         const [dataResult, countResult] = await Promise.all([
             db?.request().query(query),
@@ -296,7 +346,6 @@ export const getCompaniesById = async (data: { id: number }): Promise<IresponseR
 export const getDataFilesCompaniesById = async (data: { id: number }): Promise<IresponseRepositoryService> => {
     try {
         const companyId = data.id;
-
         const db = await connectToSqlServer();
 
         const checkQuery = `SELECT COUNT(*) as total FROM TB_Companies WHERE id = @id`;
@@ -312,40 +361,24 @@ export const getDataFilesCompaniesById = async (data: { id: number }): Promise<I
         }
 
         const query = `
-            SELECT DISTINCT
-                tbo.id,
-                DATENAME(MONTH, bkf.createAt) + ' ' +
-                CAST(DAY(bkf.createAt) AS VARCHAR) +
+            SELECT 
+                tbo.id AS orderId,
+                nf.uploadedAt AS uploadDateTime,
+                FORMAT(nf.uploadedAt, 'MMMM d') + 
                 CASE 
-                    WHEN DAY(bkf.createAt) IN (11,12,13) THEN 'th'
-                    WHEN RIGHT(CAST(DAY(bkf.createAt) AS VARCHAR), 1) = '1' THEN 'st'
-                    WHEN RIGHT(CAST(DAY(bkf.createAt) AS VARCHAR), 1) = '2' THEN 'nd'
-                    WHEN RIGHT(CAST(DAY(bkf.createAt) AS VARCHAR), 1) = '3' THEN 'rd'
+                    WHEN DAY(nf.uploadedAt) IN (11,12,13) THEN 'th'
+                    WHEN RIGHT(CAST(DAY(nf.uploadedAt) AS VARCHAR), 1) = '1' THEN 'st'
+                    WHEN RIGHT(CAST(DAY(nf.uploadedAt) AS VARCHAR), 1) = '2' THEN 'nd'
+                    WHEN RIGHT(CAST(DAY(nf.uploadedAt) AS VARCHAR), 1) = '3' THEN 'rd'
                     ELSE 'th'
                 END AS uploadDate,
-                'Box Kit File' AS fileType
+                nf.fileName,
+                nf.fileType
             FROM TB_Companies c
             LEFT JOIN TB_Order tbo ON tbo.idCompany = c.id
-            LEFT JOIN TB_BoxKitFile bkf ON bkf.idOrder = tbo.id
+            INNER JOIN TB_NameFile nf ON nf.idOrder = tbo.id
             WHERE c.id = @id
-            UNION
-            SELECT
-                tbo.id, 
-                DATENAME(MONTH, sdf.createAt) + ' ' +
-                CAST(DAY(sdf.createAt) AS VARCHAR) +
-                CASE 
-                    WHEN DAY(sdf.createAt) IN (11,12,13) THEN 'th'
-                    WHEN RIGHT(CAST(DAY(sdf.createAt) AS VARCHAR), 1) = '1' THEN 'st'
-                    WHEN RIGHT(CAST(DAY(sdf.createAt) AS VARCHAR), 1) = '2' THEN 'nd'
-                    WHEN RIGHT(CAST(DAY(sdf.createAt) AS VARCHAR), 1) = '3' THEN 'rd'
-                    ELSE 'th'
-                END AS uploadDate,
-                'Shipment Data File' AS fileType
-            FROM TB_Companies c
-            LEFT JOIN TB_Order tbo ON tbo.idCompany = c.id
-            LEFT JOIN TB_ShipmentDataFile sdf ON sdf.idOrder = tbo.id
-            WHERE c.id = @id
-            ORDER BY uploadDate DESC;
+            ORDER BY nf.uploadedAt DESC;
         `;
 
         const result = await db?.request()
