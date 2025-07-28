@@ -288,6 +288,173 @@ export const runEvenVolumeDinamicoModel = async (idOrder: number) => {
   };
 };
 
+// async function executeEvenVolumeDinamico(
+//   db: any,
+//   items: ShipmentItem[],
+//   attrData: any,
+//   idOrder: number,
+//   numBoxes: number,
+//   dimWeightFactor: number,
+//   packMaterialCost: number,
+//   corrugateCostPerSf: number,
+//   freightCostPerLb: number,
+//   modelName: string,
+//   fixedBoxLength?: number,
+//   fixedBoxWidth?: number,
+//   fixedBoxHeight?: number
+// ) {
+//   const enrichedItems = items.map(item => ({
+//     ...item,
+//     itemVolume: item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight
+//   })).sort((a, b) => b.itemVolume - a.itemVolume);
+
+//   const referenceSegments = { large: 7.5, medium: 10, small: 15 };
+//   const scale = 10 / numBoxes;
+//   const scaled = {
+//     large: referenceSegments.large * scale,
+//     medium: referenceSegments.medium * scale,
+//     small: referenceSegments.small * scale
+//   };
+//   const numLarge = Math.round(numBoxes * 0.3);
+//   const numMedium = Math.round(numBoxes * 0.3);
+//   const numSmall = numBoxes - numLarge - numMedium;
+//   const scaledPercentages = [
+//     ...Array(numLarge).fill(scaled.large),
+//     ...Array(numMedium).fill(scaled.medium),
+//     ...Array(numSmall).fill(scaled.small)
+//   ];
+
+//   const totalVolume = enrichedItems.reduce((sum, item) => sum + item.itemVolume, 0);
+//   const breakpoints = scaledPercentages.map((p, i) =>
+//     scaledPercentages.slice(0, i + 1).reduce((a, b) => a + b, 0) / 100 * totalVolume
+//   );
+
+//   const segmentStartIndexes: number[] = [0];
+//   let accVolume = 0;
+//   let currentBox = 0;
+//   for (let i = 0; i < enrichedItems.length && currentBox < numBoxes - 1; i++) {
+//     accVolume += enrichedItems[i].itemVolume;
+//     if (accVolume >= breakpoints[currentBox]) {
+//       segmentStartIndexes.push(i + 1);
+//       currentBox++;
+//     }
+//   }
+//   segmentStartIndexes.push(enrichedItems.length);
+
+//   const segments: ShipmentItem[][] = [];
+//   for (let i = 0; i < numBoxes; i++) {
+//     const from = segmentStartIndexes[i];
+//     const to = segmentStartIndexes[i + 1];
+//     if (to <= from) continue;
+//     segments.push(enrichedItems.slice(from, to));
+//   }
+
+//   const anchorBox = segments[0];
+//   const boxLength = fixedBoxLength ?? Math.max(...anchorBox.map(i => i.cubedItemLength));
+//   const boxWidth = fixedBoxWidth ?? Math.max(...anchorBox.map(i => i.cubedItemWidth));
+//   const boxHeight = fixedBoxHeight ?? Math.max(...anchorBox.map(i => i.cubedItemHeight));
+
+//   for (let i = 0; i < segments.length; i++) {
+//     const segment = segments[i];
+//     if (!segment.length) continue;
+
+//     const fromRow = segment[0].id;
+//     const toRow = segment[segment.length - 1].id;
+
+//     await db.request()
+//       .input("idOrder", idOrder)
+//       .input("model", modelName)
+//       .input("boxLabel", `Box ${i + 1}`)
+//       .input("boxNumber", i + 1)
+//       .input("boxLength", boxLength)
+//       .input("boxWidth", boxWidth)
+//       .input("boxHeight", boxHeight)
+//       .input("fromRow", fromRow)
+//       .input("toRow", toRow)
+//       .input("numBoxes", numBoxes)
+//       .query(`
+//         INSERT INTO TB_KitBoxes (
+//           idOrder, model, boxLabel, boxNumber,
+//           boxLength, boxWidth, boxHeight,
+//           fromRow, toRow, numBoxes
+//         ) VALUES (
+//           @idOrder, @model, @boxLabel, @boxNumber,
+//           @boxLength, @boxWidth, @boxHeight,
+//           @fromRow, @toRow, @numBoxes
+//         )
+//       `);
+//   }
+
+//   const MAX_BATCH_SIZE = 500;
+//   const valuesList: string[] = [];
+
+//   for (let i = 0; i < segments.length; i++) {
+//     const segment = segments[i];
+//     if (!segment.length) continue;
+
+//     for (const item of segment) {
+//       const currentArea = item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
+//                           item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth);
+//       const newArea = boxLength * (boxWidth + boxHeight) + boxWidth * (boxWidth + boxHeight);
+
+//       const currentCorrugateCost = (currentArea / 144) * corrugateCostPerSf;
+//       const newCorrugateCost = (newArea / 144) * corrugateCostPerSf;
+
+//       const currentDimWeight = (item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight) / dimWeightFactor;
+//       const newDimWeight = (boxLength * boxWidth * boxHeight) / dimWeightFactor;
+
+//       const currentBillableWeight = Math.max(item.cubedItemWeight, currentDimWeight);
+//       const newBillableWeight = Math.max(item.cubedItemWeight, newDimWeight);
+
+//       const currentFreightCost = currentBillableWeight * freightCostPerLb;
+//       const newFreightCost = newBillableWeight * freightCostPerLb;
+
+//       const currentVoidVolume = (
+//         item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight -
+//         item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight
+//       ) / 1728;
+//       const newVoidVolume = (
+//         boxLength * boxWidth * boxHeight -
+//         item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight
+//       ) / 1728;
+
+//       const currentVoidFillCost = currentVoidVolume * packMaterialCost;
+//       const newVoidFillCost = newVoidVolume * packMaterialCost;
+
+//       valuesList.push(`(
+//         ${idOrder}, ${attrData.id}, ${item.id}, '${modelName}', ${numBoxes},
+//         ${boxLength}, ${boxWidth}, ${boxHeight},
+//         ${currentArea}, ${newArea},
+//         ${currentCorrugateCost}, ${newCorrugateCost},
+//         ${currentDimWeight}, ${newDimWeight},
+//         ${currentBillableWeight}, ${newBillableWeight},
+//         ${currentFreightCost}, ${newFreightCost},
+//         ${currentVoidVolume}, ${newVoidVolume},
+//         ${currentVoidFillCost}, ${newVoidFillCost}
+//       )`);
+//     }
+//   }
+
+//   for (let i = 0; i < valuesList.length; i += MAX_BATCH_SIZE) {
+//     const chunk = valuesList.slice(i, i + MAX_BATCH_SIZE);
+//     const sql = `
+//       INSERT INTO TB_Results (
+//         idOrder, idAttributeData, idShipmenDataFile, model, boxNumber,
+//         newAssignedBoxLength, newAssignedBoxWidth, newAssignedBoxHeight,
+//         currentBoxCorrugateArea, newBoxCorrugateArea,
+//         currentBoxCorrugateCost, newBoxCorrugateCost,
+//         currentDimWeight, newDimWeight,
+//         currentBillableWeight, newBillableWeight,
+//         currentFreightCost, newFreightCost,
+//         currentVoidVolume, newVoidVolume,
+//         currentVoidFillCost, newVoidFillCost
+//       )
+//       VALUES
+//       ${chunk.join(',\n')}
+//     `;
+//     await db.request().query(sql);
+//   }
+// }
 async function executeEvenVolumeDinamico(
   db: any,
   items: ShipmentItem[],
@@ -303,136 +470,141 @@ async function executeEvenVolumeDinamico(
   fixedBoxWidth?: number,
   fixedBoxHeight?: number
 ) {
+  if (!items.length) throw new Error("No items to process");
+
   const enrichedItems = items.map(item => ({
     ...item,
     itemVolume: item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight
-  })).sort((a, b) => b.itemVolume - a.itemVolume);
-
-  const referenceSegments = { large: 7.5, medium: 10, small: 15 };
-  const scale = 10 / numBoxes;
-  const scaled = {
-    large: referenceSegments.large * scale,
-    medium: referenceSegments.medium * scale,
-    small: referenceSegments.small * scale
-  };
-  const numLarge = Math.round(numBoxes * 0.3);
-  const numMedium = Math.round(numBoxes * 0.3);
-  const numSmall = numBoxes - numLarge - numMedium;
-  const scaledPercentages = [
-    ...Array(numLarge).fill(scaled.large),
-    ...Array(numMedium).fill(scaled.medium),
-    ...Array(numSmall).fill(scaled.small)
-  ];
+  })).sort((a, b) => b.cubedItemLength - a.cubedItemLength);
 
   const totalVolume = enrichedItems.reduce((sum, item) => sum + item.itemVolume, 0);
-  const breakpoints = scaledPercentages.map((p, i) =>
-    scaledPercentages.slice(0, i + 1).reduce((a, b) => a + b, 0) / 100 * totalVolume
-  );
+  let cumulativeVolume = 0;
+  enrichedItems.forEach(item => {
+    cumulativeVolume += item.itemVolume;
+    (item as any).cumVolume = cumulativeVolume;
+    (item as any).cumVolumePct = cumulativeVolume / totalVolume;
+  });
 
-  const segmentStartIndexes: number[] = [0];
-  let accVolume = 0;
-  let currentBox = 0;
-  for (let i = 0; i < enrichedItems.length && currentBox < numBoxes - 1; i++) {
-    accVolume += enrichedItems[i].itemVolume;
-    if (accVolume >= breakpoints[currentBox]) {
-      segmentStartIndexes.push(i + 1);
-      currentBox++;
+  const boxes1 = Math.round(numBoxes * 0.3);
+  const boxes2 = Math.round(numBoxes * 0.4);
+  const boxes3 = numBoxes - boxes1 - boxes2;
+
+  const cut1Idx = enrichedItems.findIndex(i => (i as any).cumVolumePct >= boxes1 / numBoxes);
+  const cut2Idx = enrichedItems.findIndex(i => (i as any).cumVolumePct >= (boxes1 + boxes2) / numBoxes);
+
+  const segment1 = enrichedItems.slice(0, cut1Idx);
+  const segment2 = enrichedItems.slice(cut1Idx, cut2Idx);
+  const segment3 = enrichedItems.slice(cut2Idx);
+
+  const splitSegment = (segment: typeof enrichedItems, n: number) => {
+    if (n <= 0 || segment.length === 0) return Array(n).fill([]);
+    const avg = Math.ceil(segment.length / n);
+    const result: typeof enrichedItems[] = [];
+    for (let i = 0; i < segment.length; i += avg) {
+      result.push(segment.slice(i, i + avg));
     }
-  }
-  segmentStartIndexes.push(enrichedItems.length);
+    while (result.length < n) result.push([]);
+    return result;
+  };
 
-  const segments: ShipmentItem[][] = [];
-  for (let i = 0; i < numBoxes; i++) {
-    const from = segmentStartIndexes[i];
-    const to = segmentStartIndexes[i + 1];
-    if (to <= from) continue;
-    segments.push(enrichedItems.slice(from, to));
-  }
+  const boxesSegments = [
+    ...splitSegment(segment1, boxes1),
+    ...splitSegment(segment2, boxes2),
+    ...splitSegment(segment3, boxes3)
+  ];
 
-  const anchorBox = segments[0];
-  const boxLength = fixedBoxLength ?? Math.max(...anchorBox.map(i => i.cubedItemLength));
-  const boxWidth = fixedBoxWidth ?? Math.max(...anchorBox.map(i => i.cubedItemWidth));
-  const boxHeight = fixedBoxHeight ?? Math.max(...anchorBox.map(i => i.cubedItemHeight));
-
-  for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i];
-    if (!segment.length) continue;
-
-    const fromRow = segment[0].id;
-    const toRow = segment[segment.length - 1].id;
+  for (let i = 0; i < boxesSegments.length; i++) {
+    const seg = boxesSegments[i];
+    const boxLength: number = safeFloat(fixedBoxLength ?? Math.max(...seg.map((it: ShipmentItem) => it.cubedItemLength)));
+    const boxWidth: number = safeFloat(fixedBoxWidth ?? Math.max(...seg.map((it: ShipmentItem) => it.cubedItemWidth)));
+    const boxHeight: number = safeFloat(fixedBoxHeight ?? Math.max(...seg.map((it: ShipmentItem) => it.cubedItemHeight)));
 
     await db.request()
       .input("idOrder", idOrder)
-      .input("model", modelName)
       .input("boxLabel", `Box ${i + 1}`)
-      .input("boxNumber", i + 1)
+      .input("boxNumber", numBoxes)
       .input("boxLength", boxLength)
       .input("boxWidth", boxWidth)
       .input("boxHeight", boxHeight)
-      .input("fromRow", fromRow)
-      .input("toRow", toRow)
+      .input("fromRow", 0)
+      .input("toRow", 0)
+      .input("model", modelName)
       .input("numBoxes", numBoxes)
       .query(`
         INSERT INTO TB_KitBoxes (
-          idOrder, model, boxLabel, boxNumber,
+          idOrder, boxLabel, boxNumber,
           boxLength, boxWidth, boxHeight,
-          fromRow, toRow, numBoxes
-        ) VALUES (
-          @idOrder, @model, @boxLabel, @boxNumber,
+          fromRow, toRow, model, numBoxes
+        )
+        VALUES (
+          @idOrder, @boxLabel, @boxNumber,
           @boxLength, @boxWidth, @boxHeight,
-          @fromRow, @toRow, @numBoxes
+          @fromRow, @toRow, @model, @numBoxes
         )
       `);
+  }
+
+  const itemBoxMap = new Map<number, { boxLength: number, boxWidth: number, boxHeight: number }>();
+  for (const seg of boxesSegments) {
+    interface BoxDimensions {
+      boxLength: number;
+      boxWidth: number;
+      boxHeight: number;
+    }
+    const dims: BoxDimensions = {
+      boxLength: safeFloat(fixedBoxLength ?? Math.max(...seg.map((it: ShipmentItem) => it.cubedItemLength))),
+      boxWidth: safeFloat(fixedBoxWidth ?? Math.max(...seg.map((it: ShipmentItem) => it.cubedItemWidth))),
+      boxHeight: safeFloat(fixedBoxHeight ?? Math.max(...seg.map((it: ShipmentItem) => it.cubedItemHeight))),
+    };
+    for (const item of seg) {
+      itemBoxMap.set(item.id, dims);
+    }
   }
 
   const MAX_BATCH_SIZE = 500;
   const valuesList: string[] = [];
 
-  for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i];
-    if (!segment.length) continue;
+  for (const item of items) {
+    const dims = itemBoxMap.get(item.id);
+    if (!dims) continue;
 
-    for (const item of segment) {
-      const currentArea = item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
-                          item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth);
-      const newArea = boxLength * (boxWidth + boxHeight) + boxWidth * (boxWidth + boxHeight);
+    const { boxLength, boxWidth, boxHeight } = dims;
 
-      const currentCorrugateCost = (currentArea / 144) * corrugateCostPerSf;
-      const newCorrugateCost = (newArea / 144) * corrugateCostPerSf;
+    const currentArea = safeFloat(item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight)
+      + item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth));
+    const newArea = safeFloat(boxLength * (boxWidth + boxHeight) + boxWidth * (boxWidth + boxHeight));
 
-      const currentDimWeight = (item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight) / dimWeightFactor;
-      const newDimWeight = (boxLength * boxWidth * boxHeight) / dimWeightFactor;
+    const currentCorrugateCost = safeFloat((currentArea / 144) * corrugateCostPerSf);
+    const newCorrugateCost = safeFloat((newArea / 144) * corrugateCostPerSf);
 
-      const currentBillableWeight = Math.max(item.cubedItemWeight, currentDimWeight);
-      const newBillableWeight = Math.max(item.cubedItemWeight, newDimWeight);
+    const currentDimWeight = safeFloat((item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight) / dimWeightFactor);
+    const newDimWeight = safeFloat((boxLength * boxWidth * boxHeight) / dimWeightFactor);
 
-      const currentFreightCost = currentBillableWeight * freightCostPerLb;
-      const newFreightCost = newBillableWeight * freightCostPerLb;
+    const currentBillableWeight = Math.max(item.cubedItemWeight, currentDimWeight);
+    const newBillableWeight = Math.max(item.cubedItemWeight, newDimWeight);
 
-      const currentVoidVolume = (
-        item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight -
-        item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight
-      ) / 1728;
-      const newVoidVolume = (
-        boxLength * boxWidth * boxHeight -
-        item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight
-      ) / 1728;
+    const currentFreightCost = safeFloat(currentBillableWeight * freightCostPerLb);
+    const newFreightCost = safeFloat(newBillableWeight * freightCostPerLb);
 
-      const currentVoidFillCost = currentVoidVolume * packMaterialCost;
-      const newVoidFillCost = newVoidVolume * packMaterialCost;
+    const currentVoidVolume = safeFloat((item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight
+      - item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight) / 1728);
+    const newVoidVolume = safeFloat((boxLength * boxWidth * boxHeight
+      - item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight) / 1728);
 
-      valuesList.push(`(
-        ${idOrder}, ${attrData.id}, ${item.id}, '${modelName}', ${numBoxes},
-        ${boxLength}, ${boxWidth}, ${boxHeight},
-        ${currentArea}, ${newArea},
-        ${currentCorrugateCost}, ${newCorrugateCost},
-        ${currentDimWeight}, ${newDimWeight},
-        ${currentBillableWeight}, ${newBillableWeight},
-        ${currentFreightCost}, ${newFreightCost},
-        ${currentVoidVolume}, ${newVoidVolume},
-        ${currentVoidFillCost}, ${newVoidFillCost}
-      )`);
-    }
+    const currentVoidFillCost = safeFloat(currentVoidVolume * packMaterialCost);
+    const newVoidFillCost = safeFloat(newVoidVolume * packMaterialCost);
+
+    valuesList.push(`(
+      ${idOrder}, ${attrData.id}, ${item.id}, '${modelName}', ${numBoxes},
+      ${boxLength}, ${boxWidth}, ${boxHeight},
+      ${currentArea}, ${newArea},
+      ${currentCorrugateCost}, ${newCorrugateCost},
+      ${currentDimWeight}, ${newDimWeight},
+      ${currentBillableWeight}, ${newBillableWeight},
+      ${currentFreightCost}, ${newFreightCost},
+      ${currentVoidVolume}, ${newVoidVolume},
+      ${currentVoidFillCost}, ${newVoidFillCost}
+    )`);
   }
 
   for (let i = 0; i < valuesList.length; i += MAX_BATCH_SIZE) {
@@ -452,7 +624,6 @@ async function executeEvenVolumeDinamico(
       VALUES
       ${chunk.join(',\n')}
     `;
-
     await db.request().query(sql);
   }
 }
@@ -709,139 +880,6 @@ export const runTopFrequenciesModel = async (idOrder: number) => {
     message: "TopFrequencies model completed successfully"
   };
 };
-
-// export async function executeTopFrequenciesModel(
-//   db: any,
-//   items: ShipmentItem[],
-//   attrData: any,
-//   idOrder: number,
-//   numBoxes: number,
-//   dimWeightFactor: number,
-//   packMaterialCost: number,
-//   corrugateCostPerSf: number,
-//   freightCostPerLb: number,
-//   modelName: string,
-//   fixedBoxLength?: number,
-//   fixedBoxWidth?: number,
-//   fixedBoxHeight?: number
-// ) {
-
-//   const segments: ShipmentItem[][] = Array.from({ length: numBoxes }, () => []);
-
-//   for (let i = 0; i < items.length; i++) {
-//     const boxIndex = i % numBoxes;
-//     segments[boxIndex].push(items[i]);
-//   }
-
-
-//   for (let i = 0; i < numBoxes; i++) {
-//     const segmentItems = segments[i];
-//     const fromRow = segmentItems.length > 0 ? items.indexOf(segmentItems[0]) + 1 : 0;
-//     const toRow = segmentItems.length > 0 ? items.indexOf(segmentItems[segmentItems.length - 1]) + 1 : 0;
-
-//     const boxLength = fixedBoxLength ?? (segmentItems.length > 0 ? Math.max(...segmentItems.map(item => item.cubedItemLength)) : 1);
-//     const boxWidth = fixedBoxWidth ?? (segmentItems.length > 0 ? Math.max(...segmentItems.map(item => item.cubedItemWidth)) : 1);
-//     const boxHeight = fixedBoxHeight ?? (segmentItems.length > 0 ? Math.max(...segmentItems.map(item => item.cubedItemHeight)) : 1);
-
-//     const boxLabel = `Box ${i + 1}`;
-//     const boxNumber = numBoxes;
-
-//     await db.request()
-//       .input("idOrder", idOrder)
-//       .input("boxLabel", boxLabel)
-//       .input("boxNumber", boxNumber)
-//       .input("boxLength", boxLength)
-//       .input("boxWidth", boxWidth)
-//       .input("boxHeight", boxHeight)
-//       .input("fromRow", fromRow)
-//       .input("toRow", toRow)
-//       .input("model", modelName)
-//       .input("numBoxes", numBoxes)
-//       .query(`
-//         INSERT INTO TB_KitBoxes (
-//           idOrder, boxLabel, boxNumber,
-//           boxLength, boxWidth, boxHeight,
-//           fromRow, toRow, model, numBoxes
-//         )
-//         VALUES (
-//           @idOrder, @boxLabel, @boxNumber,
-//           @boxLength, @boxWidth, @boxHeight,
-//           @fromRow, @toRow, @model, @numBoxes
-//         )
-//       `);
-//   }
-
-//   const MAX_BATCH_SIZE = 500;
-//   const valuesList: string[] = [];
-
-//   for (let i = 0; i < numBoxes; i++) {
-//     const segmentItems = segments[i];
-//     if (!segmentItems.length) continue;
-
-//     const boxLength = fixedBoxLength ?? Math.max(...segmentItems.map(item => item.cubedItemLength));
-//     const boxWidth = fixedBoxWidth ?? Math.max(...segmentItems.map(item => item.cubedItemWidth));
-//     const boxHeight = fixedBoxHeight ?? Math.max(...segmentItems.map(item => item.cubedItemHeight));
-//     const boxNumber = numBoxes;
-
-//     for (const item of segmentItems) {
-//       const currentArea = item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight)
-//         + item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth);
-//       const newArea = boxLength * (boxWidth + boxHeight) + boxWidth * (boxWidth + boxHeight);
-
-//       const currentCorrugateCost = (currentArea / 144) * corrugateCostPerSf;
-//       const newCorrugateCost = (newArea / 144) * corrugateCostPerSf;
-
-//       const currentDimWeight = (item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight) / dimWeightFactor;
-//       const newDimWeight = (boxLength * boxWidth * boxHeight) / dimWeightFactor;
-
-//       const currentBillableWeight = Math.max(item.cubedItemWeight, currentDimWeight);
-//       const newBillableWeight = Math.max(item.cubedItemWeight, newDimWeight);
-
-//       const currentFreightCost = currentBillableWeight * freightCostPerLb;
-//       const newFreightCost = newBillableWeight * freightCostPerLb;
-
-//       const currentVoidVolume = (item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight
-//         - item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight) / 1728;
-//       const newVoidVolume = (boxLength * boxWidth * boxHeight
-//         - item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight) / 1728;
-
-//       const currentVoidFillCost = currentVoidVolume * packMaterialCost;
-//       const newVoidFillCost = newVoidVolume * packMaterialCost;
-
-//       valuesList.push(`(
-//         ${idOrder}, ${attrData.id}, ${item.id}, '${modelName}', ${boxNumber},
-//         ${boxLength}, ${boxWidth}, ${boxHeight},
-//         ${currentArea}, ${newArea},
-//         ${currentCorrugateCost}, ${newCorrugateCost},
-//         ${currentDimWeight}, ${newDimWeight},
-//         ${currentBillableWeight}, ${newBillableWeight},
-//         ${currentFreightCost}, ${newFreightCost},
-//         ${currentVoidVolume}, ${newVoidVolume},
-//         ${currentVoidFillCost}, ${newVoidFillCost}
-//       )`);
-//     }
-//   }
-
-//   for (let i = 0; i < valuesList.length; i += MAX_BATCH_SIZE) {
-//     const chunk = valuesList.slice(i, i + MAX_BATCH_SIZE);
-//     const sql = `
-//       INSERT INTO TB_Results (
-//         idOrder, idAttributeData, idShipmenDataFile, model, boxNumber,
-//         newAssignedBoxLength, newAssignedBoxWidth, newAssignedBoxHeight,
-//         currentBoxCorrugateArea, newBoxCorrugateArea,
-//         currentBoxCorrugateCost, newBoxCorrugateCost,
-//         currentDimWeight, newDimWeight,
-//         currentBillableWeight, newBillableWeight,
-//         currentFreightCost, newFreightCost,
-//         currentVoidVolume, newVoidVolume,
-//         currentVoidFillCost, newVoidFillCost
-//       )
-//       VALUES
-//       ${chunk.join(',\n')}
-//     `;
-//     await db.request().query(sql);
-//   }
-// }
 
 export async function executeTopFrequenciesModel(
   db: any,
@@ -1169,21 +1207,27 @@ export async function executeDistributionModel(
   if (fixedBoxLength !== undefined) {
     realBoundaries.push({ start: 0, end: items.length - 1 });
   } else {
+    const totalRows = items.length;
+    const targetRowsPerBox = totalRows / numBoxes;
     let startIdx = 0;
-    const totalItems = items.length;
-    const idealPerBox = Math.ceil(totalItems / numBoxes);
 
-    while (startIdx < totalItems) {
-      let targetIdx = Math.min(startIdx + idealPerBox - 1, totalItems - 1);
-      const targetLength = items[targetIdx].cubedItemLength;
-      let firstIdxWithLength = items.findIndex(it => it.cubedItemLength === targetLength);
-      if (firstIdxWithLength === -1) firstIdxWithLength = targetIdx;
+    for (let i = 0; i < numBoxes; i++) {
+      let endIdx: number;
 
-      const segmentStart = startIdx;
-      const segmentEnd = Math.max(firstIdxWithLength, targetIdx);
+      if (i === numBoxes - 1) {
+        endIdx = totalRows - 1;
+      } else {
+        let targetRowIdx = Math.floor(targetRowsPerBox * (i + 1));
+        if (targetRowIdx >= totalRows) targetRowIdx = totalRows - 1;
 
-      realBoundaries.push({ start: segmentStart, end: segmentEnd });
-      startIdx = segmentEnd + 1;
+        const targetLength = items[targetRowIdx].cubedItemLength;
+        const firstMatchIdx = items.findIndex(it => it.cubedItemLength === targetLength);
+
+        endIdx = Math.max(firstMatchIdx - 1, startIdx);
+      }
+
+      realBoundaries.push({ start: startIdx, end: endIdx });
+      startIdx = endIdx + 1;
     }
   }
 
@@ -1192,7 +1236,6 @@ export async function executeDistributionModel(
     kitBoundaries.push(kitBoundaries[kitBoundaries.length - 1]);
   }
 
-  // Insertar en TB_KitBoxes (esto sigue igual)
   for (let i = 0; i < numBoxes; i++) {
     const b = kitBoundaries[i];
     const segmentItems = items.slice(b.start, b.end + 1);
@@ -1232,7 +1275,6 @@ export async function executeDistributionModel(
       `);
   }
 
-  // Ahora la parte optimizada para TB_Results
   const MAX_BATCH_SIZE = 500;
   const valuesList: string[] = [];
 
@@ -1284,7 +1326,6 @@ export async function executeDistributionModel(
     }
   }
 
-  // Ejecutar en batches
   for (let i = 0; i < valuesList.length; i += MAX_BATCH_SIZE) {
     const chunk = valuesList.slice(i, i + MAX_BATCH_SIZE);
     const sql = `
