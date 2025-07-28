@@ -8,8 +8,10 @@ const configSQL: sql.config = {
   password: "boxt#123",
   database: config.name_database_sql,
   server:config.server_name_sql,
+  requestTimeout: 60000, 
   options: {
     encrypt: true,
+    trustServerCertificate: true
   },
 };
 
