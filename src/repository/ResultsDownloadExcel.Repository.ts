@@ -153,7 +153,32 @@ export const downloadExcelResultsByOrder = async (
         .input("idOrder", idOrder)
         .input("model", modelName)
         .query(`
-          SELECT r.*
+          SELECT r.id, r.idOrder,
+          r.idAttributeData,
+          r.idShipmenDataFile,
+          r.model,
+          r.boxNumber,
+          r.newAssignedBoxLength,
+          r.newAssignedBoxWidth,
+          r.newAssignedBoxHeight,
+          s.currentAssignedBoxLength,
+          s.currentAssignedBoxWidth,
+          s.currentAssignedBoxHeight,
+          r.currentBoxCorrugateArea,
+          r.newBoxCorrugateArea,
+          r.currentBoxCorrugateCost,
+          r.newBoxCorrugateCost,
+          r.currentDimWeight,
+          r.newDimWeight,
+          r.currentBillableWeight,
+          s.orderId,
+          r.newBillableWeight,
+          r.currentFreightCost,
+          r.newFreightCost,
+          r.currentVoidVolume,
+          r.newVoidVolume,
+          r.currentVoidFillCost,
+          r.newVoidFillCost
           FROM TB_Results r
           LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
           WHERE r.idOrder = @idOrder AND r.model = @model
