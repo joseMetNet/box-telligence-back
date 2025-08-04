@@ -1478,9 +1478,8 @@ async function executeEvenVolume(
     const trueCutIndex = enrichedItems.findIndex(it => it.cubedItemLength === anchorLength);
     cutPoints.push(trueCutIndex);
   }
-  cutPoints.push(enrichedItems.length); // último segmento
+  cutPoints.push(enrichedItems.length);
 
-  // ✅ Crear segmentos
   const segments: ShipmentItem[][] = [];
   let start = 0;
   for (const end of cutPoints) {
@@ -1489,7 +1488,6 @@ async function executeEvenVolume(
     start = end;
   }
 
-  // ✅ INSERT individual en TB_KitBoxes
   for (let i = 0; i < segments.length; i++) {
     const segItems = segments[i];
     const boxLength = safeFloat(fixedBoxLength ?? Math.max(...segItems.map(it => it.cubedItemLength)));
@@ -1521,7 +1519,6 @@ async function executeEvenVolume(
       `);
   }
 
-  // ✅ Calcular dimensiones por ítem → conservar mapa de cajas
   const uniqueItemMap = new Map<number, { boxLength: number; boxWidth: number; boxHeight: number }>();
   for (const item of items) {
     let foundSegment: ShipmentItem[] | undefined;
@@ -1540,7 +1537,6 @@ async function executeEvenVolume(
     uniqueItemMap.set(item.id, { boxLength, boxWidth, boxHeight });
   }
 
-  // ✅ Batch INSERT en TB_Results
   const MAX_BATCH_SIZE = 500;
   const valuesList: string[] = [];
 
@@ -1550,9 +1546,12 @@ async function executeEvenVolume(
 
     const { boxLength, boxWidth, boxHeight } = boxDims;
 
-    const currentArea = safeFloat(item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight)
-      + item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth));
-    const newArea = safeFloat(boxLength * (boxWidth + boxHeight) + boxWidth * (boxWidth + boxHeight));
+      //const currentArea = item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
+      //                    item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth);
+      const currentArea =   2*(item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) )+
+                          2*(item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth));               
+      //const newArea = boxLength * (boxWidth + boxHeight) + boxWidth * (boxWidth + boxHeight);
+      const newArea = 2*(boxLength * (boxWidth + boxHeight) )+ 2*(boxWidth * (boxWidth + boxHeight));
 
     const currentCorrugateCost = safeFloat((currentArea / 144) * corrugateCostPerSf);
     const newCorrugateCost = safeFloat((newArea / 144) * corrugateCostPerSf);
@@ -1800,10 +1799,12 @@ export async function executeEvenVolumeDinamico(
     const newBoxVolume = boxLength * boxWidth * boxHeight;
     const itemVolume = item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight;
 
-    const currentArea = safeFloat(item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
-                                  item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth));
-    const newArea = safeFloat(boxLength * (boxWidth + boxHeight) + boxWidth * (boxWidth + boxHeight));
-
+      //const currentArea = item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
+      //                    item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth);
+      const currentArea =   2*(item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) )+
+                          2*(item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth));               
+      //const newArea = boxLength * (boxWidth + boxHeight) + boxWidth * (boxWidth + boxHeight);
+      const newArea = 2*(boxLength * (boxWidth + boxHeight) )+ 2*(boxWidth * (boxWidth + boxHeight));
     const currentCorrugateCost = safeFloat((currentArea / 144) * corrugateCostPerSf);
     const newCorrugateCost = safeFloat((newArea / 144) * corrugateCostPerSf);
 
@@ -2016,9 +2017,12 @@ export async function executeTopFrequenciesModel(
       const currentBoxVolume = item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight;
       const newBoxVolume = boxLength * boxWidth * boxHeight;
 
-      const currentArea = item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
-                          item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth);
-      const newArea = boxLength * (boxWidth + boxHeight) + boxWidth * (boxWidth + boxHeight);
+      //const currentArea = item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
+      //                    item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth);
+      const currentArea =   2*(item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) )+
+                          2*(item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth));               
+      //const newArea = boxLength * (boxWidth + boxHeight) + boxWidth * (boxWidth + boxHeight);
+      const newArea = 2*(boxLength * (boxWidth + boxHeight) )+ 2*(boxWidth * (boxWidth + boxHeight));
 
       const currentCorrugateCost = (currentArea / 144) * corrugateCostPerSf;
       const newCorrugateCost = (newArea / 144) * corrugateCostPerSf;
@@ -2238,10 +2242,12 @@ export async function executeDistributionModel(
       const currentBoxVolume = item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight;
       const newBoxVolume = boxLength * boxWidth * boxHeight;
 
-      const currentArea = item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
-                          item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth);
-      const newArea = boxLength * (boxWidth + boxHeight) + boxWidth * (boxWidth + boxHeight);
-
+      //const currentArea = item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
+      //                    item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth);
+      const currentArea =   2*(item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) )+
+                          2*(item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth));               
+      //const newArea = boxLength * (boxWidth + boxHeight) + boxWidth * (boxWidth + boxHeight);
+      const newArea = 2*(boxLength * (boxWidth + boxHeight) )+ 2*(boxWidth * (boxWidth + boxHeight));
       const currentCorrugateCost = (currentArea / 144) * corrugateCostPerSf;
       const newCorrugateCost = (newArea / 144) * corrugateCostPerSf;
 
