@@ -800,7 +800,6 @@ export function applyAABBHeuristic(row: any): ShipmentItem[] {
   if (rawItems.length === 0) return [];
 
   const box = computeHeuristicAABBShippingBox(rawItems);
-
   if (!box) return [];
 
   return [{
@@ -812,9 +811,9 @@ export function applyAABBHeuristic(row: any): ShipmentItem[] {
     currentAssignedBoxWidth: box.width,
     currentAssignedBoxHeight: box.height,
     id: row.id,
+    cubingMethod: box.method,
   }];
 }
-
 // export const runTopFrequenciesModel = async (idOrder: number) => {
 //   const db = await connectToSqlServer();
 //   if (!db) throw new Error("No se pudo conectar a la base de datos");
@@ -1070,7 +1069,7 @@ export function applyAABBHeuristic(row: any): ShipmentItem[] {
 //   }
 // }
 
-function computeHeuristicAABBShippingBox(items: { length: number, width: number, height: number }[]) {
+function computeHeuristicAABBShippingBox(items: { length: number, width: number, height: number }[]): { length: number, width: number, height: number, volume: number, method: string } | null {
   const computeAABB = (arr: any[]) => {
     const minX = Math.min(...arr.map(i => i.x));
     const minY = Math.min(...arr.map(i => i.y));
@@ -1089,6 +1088,7 @@ function computeHeuristicAABBShippingBox(items: { length: number, width: number,
 
   let bestBox = null;
   let bestVolume = Infinity;
+  let bestMethod = "";
 
   // Linear Y
   let yPos = 0;
@@ -1098,7 +1098,9 @@ function computeHeuristicAABBShippingBox(items: { length: number, width: number,
     return placed;
   });
   let box = computeAABB(linearY);
-  bestBox = box; bestVolume = box.volume;
+  bestBox = box;
+  bestVolume = box.volume;
+  bestMethod = "linearY";
 
   // Linear Z
   let zPos = 0;
@@ -1111,6 +1113,7 @@ function computeHeuristicAABBShippingBox(items: { length: number, width: number,
   if (box.volume < bestVolume) {
     bestBox = box;
     bestVolume = box.volume;
+    bestMethod = "linearZ";
   }
 
   // Grid 2x2
@@ -1124,10 +1127,12 @@ function computeHeuristicAABBShippingBox(items: { length: number, width: number,
     box = computeAABB(grid);
     if (box.volume < bestVolume) {
       bestBox = box;
+      bestVolume = box.volume;
+      bestMethod = "2x2Grid";
     }
   }
 
-  return bestBox!;
+  return bestBox ? { ...bestBox, method: bestMethod } : null;
 }
 
 // export const runEvenDistributionModel = async (idOrder: number) => {

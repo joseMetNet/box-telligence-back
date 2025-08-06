@@ -7,6 +7,7 @@ export interface ShipmentItem {
   currentAssignedBoxLength: number;
   currentAssignedBoxWidth: number;
   currentAssignedBoxHeight: number;
+  cubingMethod: string;
 }
 
 export interface AttributeData {
