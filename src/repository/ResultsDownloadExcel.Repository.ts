@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import { Response } from 'express';
 import { connectToSqlServer } from '../DB/config';
+import { getModelImprovementByIdOrder } from './Results.repository';
 
 // export const downloadExcelResultsByOrder = async (
 //     idOrder: number,
@@ -162,6 +163,7 @@ export const downloadExcelResultsByOrder = async (
           s.cubedItemWidth,
           s.cubedItemHeight,
           s.cubedItemWeight,
+          s.cubingMethod,
           r.newAssignedBoxLength,
           r.newAssignedBoxWidth,
           r.newAssignedBoxHeight,
@@ -238,69 +240,54 @@ export const downloadExcelResultsPercentajeByOrder = async (
     "TopFrequencies",
     "EvenVolumeDynamic",
     "EvenVolume"
-  ];
+  ] as const;
 
   const workbook = new ExcelJS.Workbook();
 
   for (const model of modelsOptimized) {
-    const currentModel = `Current${model}`;
-
-    // Optimized results
-    const optimizedResult: any = await db.request()
+    const totalBoxNumbersResult = await db.request()
       .input("idOrder", idOrder)
       .input("model", model)
       .query(`
-        SELECT * FROM TB_Results
+        SELECT COUNT(DISTINCT boxNumber) AS total
+        FROM TB_Results
         WHERE idOrder = @idOrder AND model = @model
-        ORDER BY id ASC
       `);
 
-    // Current results
-    const currentResult: any = await db.request()
-      .input("idOrder", idOrder)
-      .input("model", currentModel)
-      .query(`
-        SELECT * FROM TB_Results
-        WHERE idOrder = @idOrder AND model = @model
-        ORDER BY id ASC
-      `);
+    const totalBoxes = totalBoxNumbersResult.recordset[0]?.total || 0;
+    const pageSize = 10;
+    const totalPages = Math.ceil(totalBoxes / pageSize);
 
-    if (!optimizedResult.recordset.length || !currentResult.recordset.length) continue;
+    const allImprovements = [];
 
-    const currentWeights = currentResult.recordset.map((r: any) => r.newBillableWeight);
-    const currentFreights = currentResult.recordset.map((r: any) => r.newFreightCost);
-    const currentVoidVolumes = currentResult.recordset.map((r: any) => r.newVoidVolume);
-    const currentVoidFillCosts = currentResult.recordset.map((r: any) => r.newVoidFillCost);
-    const currentCorrugateAreas = currentResult.recordset.map((r: any) => r.newBoxCorrugateArea);
-    const currentCorrugateCosts = currentResult.recordset.map((r: any) => r.newBoxCorrugateCost);
+    for (let page = 1; page <= totalPages; page++) {
+      const improvements = await getModelImprovementByIdOrder(idOrder, model, page, pageSize);
+      allImprovements.push(...improvements);
+    }
 
-    const improvements = optimizedResult.recordset.map((opt: any, idx: number) => {
-      return {
-        id: opt.id,
-        boxNumber: opt.boxNumber,
-        DimensionalWeightImprovement:
-          currentWeights[idx] > 0 ? 1 - (opt.newBillableWeight / currentWeights[idx]) : 0,
-        EstimatedTotalFreightImprovement:
-          currentFreights[idx] > 0 ? 1 - (opt.newFreightCost / currentFreights[idx]) : 0,
-        VoidVolumeImprovement:
-          currentVoidVolumes[idx] > 0 ? 1 - (opt.newVoidVolume / currentVoidVolumes[idx]) : 0,
-        VoidFillCostImprovement:
-          currentVoidFillCosts[idx] > 0 ? 1 - (opt.newVoidFillCost / currentVoidFillCosts[idx]) : 0,
-        CorrugateAreaImprovement:
-          currentCorrugateAreas[idx] > 0 ? 1 - (opt.newBoxCorrugateArea / currentCorrugateAreas[idx]) : 0,
-        CorrugateCostImprovement:
-          currentCorrugateCosts[idx] > 0 ? 1 - (opt.newBoxCorrugateCost / currentCorrugateCosts[idx]) : 0,
-      };
-    });
-
-    // Crear hoja solo si hay mejoras
-    if (improvements.length > 0) {
+    if (allImprovements.length > 0) {
       const sheet = workbook.addWorksheet(`${model}_Improvements`);
-      sheet.columns = Object.keys(improvements[0]).map(key => ({
-        header: key,
-        key,
-      }));
-      improvements.forEach((row: any) => sheet.addRow(row));
+      sheet.columns = [
+        { header: 'Box Number', key: 'boxNumber' },
+        { header: 'Dimensional Weight Improvement (%)', key: 'DimensionalWeightImprovement' },
+        { header: 'Estimated Freight Improvement (%)', key: 'EstimatedTotalFreightImprovement' },
+        { header: 'Void Volume Improvement (%)', key: 'VoidVolumeImprovement' },
+        { header: 'Void Fill Cost Improvement (%)', key: 'VoidFillCostImprovement' },
+        { header: 'Corrugate Area Improvement (%)', key: 'CorrugateAreaImprovement' },
+        { header: 'Corrugate Cost Improvement (%)', key: 'CorrugateCostImprovement' },
+      ];
+
+      allImprovements.forEach(row => {
+        sheet.addRow({
+          boxNumber: row.boxNumber,
+          DimensionalWeightImprovement: Number((row.DimensionalWeightImprovement * 100).toFixed(2)),
+          EstimatedTotalFreightImprovement: Number((row.EstimatedTotalFreightImprovement * 100).toFixed(2)),
+          VoidVolumeImprovement: Number((row.VoidVolumeImprovement * 100).toFixed(2)),
+          VoidFillCostImprovement: Number((row.VoidFillCostImprovement * 100).toFixed(2)),
+          CorrugateAreaImprovement: Number((row.CorrugateAreaImprovement * 100).toFixed(2)),
+          CorrugateCostImprovement: Number((row.CorrugateCostImprovement * 100).toFixed(2)),
+        });
+      });
     }
   }
 

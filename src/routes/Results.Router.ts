@@ -113,7 +113,6 @@ evenDistributionModelRouter.post("/even-distribution-model", runEvenDistribution
  *                       results:
  *                         type: array
  *                         items:
- *                           $ref: '#/components/schemas/IResult'
  *                       boxNumbers:
  *                         type: array
  *                         items:
