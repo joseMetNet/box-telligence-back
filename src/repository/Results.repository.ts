@@ -631,8 +631,9 @@ export const getModelImprovementByIdOrder = async (
   pageSize: number = 10
 ) => {
   const db = await connectToSqlServer();
+  const currentModel = `Current${model}`;
 
-  const boxNumbersResult: any = await db?.request()
+  const boxNumbersResult = await db?.request()
     .input("idOrder", idOrder)
     .input("model", model)
     .input("pageSize", pageSize)
@@ -645,24 +646,20 @@ export const getModelImprovementByIdOrder = async (
       OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
     `);
 
-  const boxNumbers = boxNumbersResult.recordset.map((r: any) => r.boxNumber);
+  const boxNumbers = boxNumbersResult?.recordset?.map((r: any) => r.boxNumber) || [];
   if (!boxNumbers.length) return [];
 
-  interface BoxNumberRow {
-    boxNumber: number;
-  }
-
-  const inClause: string = boxNumbers.map((_: BoxNumberRow, i: number) => `@box${i}`).join(',');
+  const inClause = boxNumbers.map((_, i) => `@box${i}`).join(',');
   const request = db?.request().input("idOrder", idOrder).input("model", model);
   if (request) {
-    boxNumbers.forEach((box: number, i: number) => {
+    boxNumbers.forEach((box, i) => {
       request.input(`box${i}`, box);
     });
   } else {
     throw new Error("Database request object is undefined.");
   }
 
-  const boxResults = await request.query(`
+  const optimizedResult = await request.query(`
     SELECT boxNumber,
            SUM(CAST(newBillableWeight AS FLOAT)) AS newBillableWeight,
            SUM(CAST(newFreightCost AS FLOAT)) AS newFreightCost,
@@ -676,9 +673,9 @@ export const getModelImprovementByIdOrder = async (
     ORDER BY boxNumber
   `);
 
-  const totalResult: any = await db?.request()
+  const currentTotalResult = await db?.request()
     .input("idOrder", idOrder)
-    .input("model", model)
+    .input("model", currentModel)
     .query(`
       SELECT
         SUM(CAST(newBillableWeight AS FLOAT)) AS newBillableWeight,
@@ -691,36 +688,39 @@ export const getModelImprovementByIdOrder = async (
       WHERE idOrder = @idOrder AND model = @model
     `);
 
-  const total = totalResult.recordset[0];
-  if (!total || total.newBillableWeight == null) {
-    throw new Error(`No total results found for model: ${model}`);
+  if (!currentTotalResult || !currentTotalResult.recordset || !currentTotalResult.recordset[0]) {
+    throw new Error(`No current results found for model: ${currentModel}`);
+  }
+  const current = currentTotalResult.recordset[0];
+  if (current.newBillableWeight == null) {
+    throw new Error(`No current results found for model: ${currentModel}`);
   }
 
-  const improvements = boxResults.recordset.map((box: any) => ({
+  const improvements = optimizedResult.recordset.map((box: any) => ({
     boxNumber: box.boxNumber,
     DimensionalWeightImprovement:
-      total.newBillableWeight > 0
-        ? 1 - (box.newBillableWeight / total.newBillableWeight)
+      current.newBillableWeight > 0
+        ? 1 - (box.newBillableWeight / current.newBillableWeight)
         : 0,
     EstimatedTotalFreightImprovement:
-      total.newFreightCost > 0
-        ? 1 - (box.newFreightCost / total.newFreightCost)
+      current.newFreightCost > 0
+        ? 1 - (box.newFreightCost / current.newFreightCost)
         : 0,
     VoidVolumeImprovement:
-      total.newVoidVolume > 0
-        ? 1 - (box.newVoidVolume / total.newVoidVolume)
+      current.newVoidVolume > 0
+        ? 1 - (box.newVoidVolume / current.newVoidVolume)
         : 0,
     VoidFillCostImprovement:
-      total.newVoidFillCost > 0
-        ? 1 - (box.newVoidFillCost / total.newVoidFillCost)
+      current.newVoidFillCost > 0
+        ? 1 - (box.newVoidFillCost / current.newVoidFillCost)
         : 0,
     CorrugateAreaImprovement:
-      total.newBoxCorrugateArea > 0
-        ? 1 - (box.newBoxCorrugateArea / total.newBoxCorrugateArea)
+      current.newBoxCorrugateArea > 0
+        ? 1 - (box.newBoxCorrugateArea / current.newBoxCorrugateArea)
         : 0,
     CorrugateCostImprovement:
-      total.newBoxCorrugateCost > 0
-        ? 1 - (box.newBoxCorrugateCost / total.newBoxCorrugateCost)
+      current.newBoxCorrugateCost > 0
+        ? 1 - (box.newBoxCorrugateCost / current.newBoxCorrugateCost)
         : 0,
   }));
 
