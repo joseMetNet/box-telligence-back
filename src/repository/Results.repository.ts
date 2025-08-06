@@ -10,7 +10,6 @@ export const getResultsByOrder = async (
   const db = await connectToSqlServer();
   if (!db) throw new Error("No se pudo conectar a la base de datos");
 
-  // Obtener todos los modelos disponibles para el idOrder
   const modelsResult = await db
     .request()
     .input("idOrder", idOrder)
@@ -52,7 +51,6 @@ export const getResultsByOrder = async (
     let total = 0;
 
     if (modelExists) {
-      // Obtener boxNumbers únicos paginados
       const boxNumbersResult = await db
         .request()
         .input("idOrder", idOrder)
@@ -96,7 +94,7 @@ export const getResultsByOrder = async (
                  SUM(CAST(newFreightCost AS FLOAT)) AS newFreightCost,
                  SUM(CAST(newVoidVolume AS FLOAT)) AS newVoidVolume,
                  SUM(CAST(newVoidFillCost AS FLOAT)) AS newVoidFillCost,
-                 SUM(CAST(newBoxCorrugateArea AS FLOAT)) AS newBoxCorrugateArea,
+                 SUM(CAST(newBoxCorrugateArea AS FLOAT)) / 144 AS newBoxCorrugateArea,
                  SUM(CAST(newBoxCorrugateCost AS FLOAT)) AS newBoxCorrugateCost
           FROM TB_Results
           WHERE idOrder = @idOrder AND model = @model
@@ -109,7 +107,6 @@ export const getResultsByOrder = async (
       }
     }
 
-    // Obtener información de atributos de la orden
     const statsResult = await db
       .request()
       .input("idOrder", idOrder)
@@ -138,7 +135,6 @@ export const getResultsByOrder = async (
       { label: 'Maximum Number of Boxes to Analyze', value: maxBoxNumber },
     ];
 
-    // Obtener resultados del modelo actual (agrupados)
     let currentResults: any[] = [];
     if (currentModelExists) {
       const currentResultsQuery = await db
@@ -151,7 +147,7 @@ export const getResultsByOrder = async (
                  SUM(CAST(newFreightCost AS FLOAT)) AS newFreightCost,
                  SUM(CAST(newVoidVolume AS FLOAT)) AS newVoidVolume,
                  SUM(CAST(newVoidFillCost AS FLOAT)) AS newVoidFillCost,
-                 SUM(CAST(newBoxCorrugateArea AS FLOAT)) AS newBoxCorrugateArea,
+                 SUM(CAST(newBoxCorrugateArea AS FLOAT)) / 144 AS newBoxCorrugateArea,
                  SUM(CAST(newBoxCorrugateCost AS FLOAT)) AS newBoxCorrugateCost
           FROM TB_Results
           WHERE idOrder = @idOrder AND model = @model
@@ -164,7 +160,7 @@ export const getResultsByOrder = async (
 
     modelGroups.push({
       model,
-      results, // resultados del modelo optimizado (agrupados)
+      results,
       boxNumbers,
       total,
       page,
@@ -174,7 +170,7 @@ export const getResultsByOrder = async (
       totalBoxesUsed,
       minBoxNumber,
       maxBoxNumber,
-      [currentModelName]: currentResults // resultados del modelo current (agrupados)
+      [currentModelName]: currentResults
     });
   }
 
@@ -630,65 +626,101 @@ export const getValidateResultsByOrder = async (idOrder: number): Promise<1 | 0>
 
 export const getModelImprovementByIdOrder = async (
   idOrder: number,
-  model: "EvenDistribution" | "TopFrequencies" | "EvenVolumeDynamic" | "EvenVolume"
+  model: "EvenDistribution" | "TopFrequencies" | "EvenVolumeDynamic" | "EvenVolume",
+  page: number = 1,
+  pageSize: number = 10
 ) => {
   const db = await connectToSqlServer();
-  const currentModel = `Current${model}`;
 
-  const currentResult: any = await db?.request()
+  const boxNumbersResult: any = await db?.request()
     .input("idOrder", idOrder)
-    .input("model", currentModel)
+    .input("model", model)
+    .input("pageSize", pageSize)
+    .input("offset", (page - 1) * pageSize)
     .query(`
-      SELECT * FROM TB_Results
+      SELECT DISTINCT boxNumber
+      FROM TB_Results
       WHERE idOrder = @idOrder AND model = @model
+      ORDER BY boxNumber
+      OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
     `);
 
-  if (!currentResult.recordset.length) {
-    throw new Error(`No current results found for model: ${currentModel}`);
+  const boxNumbers = boxNumbersResult.recordset.map((r: any) => r.boxNumber);
+  if (!boxNumbers.length) return [];
+
+  interface BoxNumberRow {
+    boxNumber: number;
   }
 
-  const currentBoxNumber = currentResult.recordset[0].boxNumber;
-  const current = currentResult.recordset[0];
+  const inClause: string = boxNumbers.map((_: BoxNumberRow, i: number) => `@box${i}`).join(',');
+  const request = db?.request().input("idOrder", idOrder).input("model", model);
+  if (request) {
+    boxNumbers.forEach((box: number, i: number) => {
+      request.input(`box${i}`, box);
+    });
+  } else {
+    throw new Error("Database request object is undefined.");
+  }
 
-  const optimizedResult: any = await db?.request()
+  const boxResults = await request.query(`
+    SELECT boxNumber,
+           SUM(CAST(newBillableWeight AS FLOAT)) AS newBillableWeight,
+           SUM(CAST(newFreightCost AS FLOAT)) AS newFreightCost,
+           SUM(CAST(newVoidVolume AS FLOAT)) AS newVoidVolume,
+           SUM(CAST(newVoidFillCost AS FLOAT)) AS newVoidFillCost,
+           SUM(CAST(newBoxCorrugateArea AS FLOAT)) / 144 AS newBoxCorrugateArea,
+           SUM(CAST(newBoxCorrugateCost AS FLOAT)) AS newBoxCorrugateCost
+    FROM TB_Results
+    WHERE idOrder = @idOrder AND model = @model AND boxNumber IN (${inClause})
+    GROUP BY boxNumber
+    ORDER BY boxNumber
+  `);
+
+  const totalResult: any = await db?.request()
     .input("idOrder", idOrder)
     .input("model", model)
     .query(`
-      SELECT * FROM TB_Results
+      SELECT
+        SUM(CAST(newBillableWeight AS FLOAT)) AS newBillableWeight,
+        SUM(CAST(newFreightCost AS FLOAT)) AS newFreightCost,
+        SUM(CAST(newVoidVolume AS FLOAT)) AS newVoidVolume,
+        SUM(CAST(newVoidFillCost AS FLOAT)) AS newVoidFillCost,
+        SUM(CAST(newBoxCorrugateArea AS FLOAT)) / 144 AS newBoxCorrugateArea,
+        SUM(CAST(newBoxCorrugateCost AS FLOAT)) AS newBoxCorrugateCost
+      FROM TB_Results
       WHERE idOrder = @idOrder AND model = @model
-      ORDER BY boxNumber ASC
     `);
 
-  if (!optimizedResult.recordset.length) {
-    throw new Error(`No optimized results found for model: ${model}`);
+  const total = totalResult.recordset[0];
+  if (!total || total.newBillableWeight == null) {
+    throw new Error(`No total results found for model: ${model}`);
   }
 
-  const improvements = optimizedResult.recordset.map((opt: any) => ({
-    id: opt.id,
-    boxNumber: opt.boxNumber,
+  const improvements = boxResults.recordset.map((box: any) => ({
+    boxNumber: box.boxNumber,
     DimensionalWeightImprovement:
-      current.newBillableWeight > 0
-        ? 1 - (opt.newBillableWeight / current.newBillableWeight)
+      total.newBillableWeight > 0
+        ? 1 - (box.newBillableWeight / total.newBillableWeight)
         : 0,
     EstimatedTotalFreightImprovement:
-      current.newFreightCost > 0
-        ? 1 - (opt.newFreightCost / current.newFreightCost)
+      total.newFreightCost > 0
+        ? 1 - (box.newFreightCost / total.newFreightCost)
         : 0,
     VoidVolumeImprovement:
-      current.newVoidVolume > 0
-        ? 1 - (opt.newVoidVolume / current.newVoidVolume)
+      total.newVoidVolume > 0
+        ? 1 - (box.newVoidVolume / total.newVoidVolume)
         : 0,
     VoidFillCostImprovement:
-      current.newVoidFillCost > 0
-        ? 1 - (opt.newVoidFillCost / current.newVoidFillCost)
+      total.newVoidFillCost > 0
+        ? 1 - (box.newVoidFillCost / total.newVoidFillCost)
         : 0,
     CorrugateAreaImprovement:
-      current.newBoxCorrugateArea > 0
-        ? 1 - (opt.newBoxCorrugateArea / current.newBoxCorrugateArea)
+      total.newBoxCorrugateArea > 0
+        ? 1 - (box.newBoxCorrugateArea / total.newBoxCorrugateArea)
         : 0,
     CorrugateCostImprovement:
-      current.newBoxCorrugateCost > 0
-        ? 1 - (opt.newBoxCorrugateCost / current.newBoxCorrugateCost)
+      total.newBoxCorrugateCost > 0
+        ? 1 - (box.newBoxCorrugateCost / total.newBoxCorrugateCost)
         : 0,
   }));
 
