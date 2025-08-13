@@ -24,6 +24,27 @@ export const createAttributeDataController: RequestHandler = async (req, res) =>
     }
 };
 
+export const getAttributeDataByOrderController: RequestHandler = async (req, res) => {
+  try {
+    const raw = (req.params.idOrder ?? req.query.idOrder) as string;
+    const idOrder = Number(raw);
+
+    if (!raw || Number.isNaN(idOrder) || idOrder <= 0) {
+      return res.status(400).json({
+        message: parseMessageI18n("attributeData.missing_or_invalid_idOrder", req),
+      });
+    }
+
+    const { code, message, ...rest } = await repository.getAttributeDataByOrder(idOrder);
+    return res.status(code).json({ message: parseMessageI18n(message, req), ...rest });
+  } catch (err) {
+    console.error("Error in getAttributeDataByOrderController", err);
+    return res.status(500).json({
+      message: parseMessageI18n("attributeData.error_server", req),
+    });
+  }
+};
+
 export const getNewCompaniesController: RequestHandler = async (req, res) => {
     try {
         const page = parseInt(req.query.page as string) || 1;

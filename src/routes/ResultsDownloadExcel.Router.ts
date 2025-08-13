@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { downloadExcelResultsByOrder, downloadExcelResultsPercentajeByOrder } from '../repository/ResultsDownloadExcel.Repository';
+import { downloadSumaryDataFromResultsController } from '../controllers/Results.Controller';
 
 const resultsDownloadExcelRouter = Router();
 
@@ -102,6 +103,67 @@ resultsDownloadExcelRouter.get('/results/download-excel-percentaje', async (req,
 //         res.status(500).json({ message: 'Error generating Excel', error: err });
 //     }
 // });
+
+/**
+ * @swagger
+ * /excel/sumary-data/{idOrder}:
+ *   get:
+ *     tags:
+ *       - Results
+ *     summary: Descargar Summary Data (estructura de getResultsByOrder)
+ *     description: Genera y descarga un Excel con las hojas <Model>_Results, Current<Model>_Results (si existe) y <Model>_Summary, usando la misma agregación de getResultsByOrder.
+ *     parameters:
+ *       - in: path
+ *         name: idOrder
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID de la orden
+ *         example: 123
+ *     responses:
+ *       200:
+ *         description: Archivo Excel generado correctamente.
+ *         content:
+ *           application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       400:
+ *         description: Parámetros inválidos.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: object
+ *                   example:
+ *                     translationKey: excel.required_field_text
+ *                     translationParams: { name: "idOrder" }
+ *       404:
+ *         description: No hay datos para el idOrder indicado.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: No hay datos para este idOrder.
+ *       500:
+ *         description: Error interno del servidor.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: object
+ *                   example:
+ *                     translationKey: error_server
+ *                     translationParams: { name: "downloadSumaryDataFromResultsController" }
+ */
+resultsDownloadExcelRouter.get("/excel/sumary-data/:idOrder", downloadSumaryDataFromResultsController);
 
 
 export default resultsDownloadExcelRouter;
