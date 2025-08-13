@@ -507,49 +507,74 @@ export const getCompanyFileDetailsByDate = async (data: { id: number, fileType: 
     }
 };
 
-export const deleteFileCompany = async (data: { id: number, fileType: string | "Box Kit File" | "Shipment Data File" }): Promise<IresponseRepositoryService> => {
+export const deleteFileCompany = async (
+  data: { id: number; fileType?: "Box Kit File" | "Shipment Data File" }
+): Promise<IresponseRepositoryService> => {
   try {
-    const { id, fileType } = data;
+    const { id } = data;
     const db = await connectToSqlServer();
+    if (!db) {
+      return {
+        code: 500,
+        message: { translationKey: "company.error_server", translationParams: { name: "deleteFileCompany" } },
+      };
+    }
 
-    const resultsExist: any = await db?.request()
+    const query = `
+      DECLARE @delResults           INT = 0,
+              @delKitBoxes          INT = 0,
+              @delNameFile          INT = 0,
+              @delBoxKitFile        INT = 0,
+              @delShipmentDataFile  INT = 0;
+
+      BEGIN TRY
+        BEGIN TRAN;
+
+        DELETE FROM TB_Results  WHERE idOrder = @idOrder;
+        SET @delResults = @@ROWCOUNT;
+
+        DELETE FROM TB_KitBoxes WHERE idOrder = @idOrder;
+        SET @delKitBoxes = @@ROWCOUNT;
+
+        DELETE FROM TB_BoxKitFile WHERE idOrder = @idOrder;
+        SET @delBoxKitFile = @@ROWCOUNT;
+
+        DELETE FROM TB_ShipmentDataFile WHERE idOrder = @idOrder;
+        SET @delShipmentDataFile = @@ROWCOUNT;
+
+        DELETE FROM TB_NameFile WHERE idOrder = @idOrder;
+        SET @delNameFile = @@ROWCOUNT;
+
+        COMMIT TRAN;
+
+        SELECT 
+          @delResults            AS deletedResults,
+          @delKitBoxes           AS deletedKitBoxes,
+          @delBoxKitFile         AS deletedBoxKitFile,
+          @delShipmentDataFile   AS deletedShipmentDataFile,
+          @delNameFile           AS deletedNameFile,
+          (@delResults + @delKitBoxes + @delBoxKitFile + @delShipmentDataFile + @delNameFile) AS totalDeleted;
+      END TRY
+      BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRAN;
+        THROW;
+      END CATCH
+    `;
+
+    const result = await db.request()
       .input("idOrder", id)
-      .query(`
-        SELECT TOP 1 id
-        FROM TB_Results
-        WHERE idOrder = @idOrder
-      `);
-
-    if (resultsExist.recordset.length > 0) {
-      return {
-        code: 400,
-        message: {
-          translationKey: "This data already has results. It cannot be deleted.",
-          translationParams: { name: "deleteFileCompany" }
-        },
-      };
-    }
-
-    let query = "";
-
-    if (fileType === "Box Kit File") {
-      query = `DELETE FROM TB_BoxKitFile WHERE idOrder = @id`;
-    } else if (fileType === "Shipment Data File") {
-      query = `DELETE FROM TB_ShipmentDataFile WHERE idOrder = @id`;
-    } else {
-      return {
-        code: 400,
-        message: { translationKey: "company.invalid_file_type", translationParams: { name: "deleteFileCompany" } },
-      };
-    }
-
-    const result = await db?.request()
-      .input('id', id)
       .query(query);
 
-    const rowsAffected = result?.rowsAffected?.[0] || 0;
+    const summary = result?.recordset?.[0] || {
+      deletedResults: 0,
+      deletedKitBoxes: 0,
+      deletedBoxKitFile: 0,
+      deletedShipmentDataFile: 0,
+      deletedNameFile: 0,
+      totalDeleted: 0,
+    };
 
-    if (rowsAffected > 0) {
+    if (summary.totalDeleted > 0) {
       return {
         code: 200,
         message: { translationKey: "company.successful", translationParams: { name: "deleteFileCompany" } },
@@ -560,7 +585,6 @@ export const deleteFileCompany = async (data: { id: number, fileType: string | "
         message: { translationKey: "company.notFound", translationParams: { name: "deleteFileCompany" } },
       };
     }
-
   } catch (err) {
     console.error("Error deleting file company:", err);
     return {
@@ -608,6 +632,34 @@ export const createAttributeData = async (data: ICompany): Promise<IresponseRepo
         return {
             code: 400,
             message: { translationKey: "attributeData.error_creating", translationParams: { name: "createAttributeData" } },
+        };
+    }
+};
+
+export const getAttributeDataByOrder = async (idOrder: number): Promise<IresponseRepositoryService> => {
+    try {
+        const db = await connectToSqlServer();
+
+        const query = `
+            SELECT *
+            FROM TB_AttributeData
+            WHERE idOrder = @idOrder
+        `;
+
+        const result = await db?.request()
+            .input("idOrder", idOrder)
+            .query(query);
+
+        return {
+            code: 200,
+            message: { translationKey: "attributeData.found", translationParams: { name: "getAttributeDataByOrder" } },
+            data: result?.recordset || []
+        };
+    } catch (err) {
+        console.error("Error fetching attribute data by order", err);
+        return {
+            code: 500,
+            message: { translationKey: "attributeData.error_server", translationParams: { name: "getAttributeDataByOrder" } },
         };
     }
 };

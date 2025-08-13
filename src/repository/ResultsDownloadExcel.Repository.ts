@@ -3,108 +3,6 @@ import { Response } from 'express';
 import { connectToSqlServer } from '../DB/config';
 import { getModelImprovementByIdOrder } from './Results.repository';
 
-// export const downloadExcelResultsByOrder = async (
-//     idOrder: number,
-//     res: Response
-// ) => {
-//     const db = await connectToSqlServer();
-//     if (!db) throw new Error("No se pudo conectar a la base de datos");
-
-//     const modelsResult = await db
-//         .request()
-//         .input("idOrder", idOrder)
-//         .query(`
-//       SELECT DISTINCT model
-//       FROM TB_Results
-//       WHERE idOrder = @idOrder
-//     `);
-
-//     const allModels = modelsResult.recordset.map((row: any) => row.model);
-
-//     const allowedModels = [
-//         'EvenDistribution',
-//         'EvenVolume',
-//         'EvenVolumeDynamic',
-//         'TopFrequencies',
-//     ];
-
-//     const currentModels: any = {
-//         EvenDistribution: 'CurrentEvenDistribution',
-//         EvenVolume: 'CurrentEvenVolume',
-//         EvenVolumeDynamic: 'CurrentEvenVolumeDynamic',
-//         TopFrequencies: 'CurrentTopFrequencies',
-//     };
-
-//     const filteredModels = allowedModels.filter(
-//         (m) => allModels.includes(m) || allModels.includes(currentModels[m])
-//     );
-
-//     const workbook = new ExcelJS.Workbook();
-
-//     for (const model of filteredModels) {
-//         const modelExists = allModels.includes(model);
-//         const currentModelName = currentModels[model];
-//         const currentModelExists = allModels.includes(currentModelName);
-
-//         // Resultados del modelo principal
-//         let results: any[] = [];
-//         if (modelExists) {
-//             const resultsQuery = await db.request()
-//                 .input("idOrder", idOrder)
-//                 .input("model", model)
-//                 .query(`
-//           SELECT r.*
-//           FROM TB_Results r
-//           LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
-//           WHERE r.idOrder = @idOrder AND r.model = @model
-//           ORDER BY r.boxNumber, r.id
-//         `);
-//             results = resultsQuery.recordset;
-//         }
-
-//         // Resultados del modelo Current...
-//         let currentResults: any[] = [];
-//         if (currentModelExists) {
-//             const currentResultsQuery = await db.request()
-//                 .input("idOrder", idOrder)
-//                 .input("model", currentModelName)
-//                 .query(`
-//           SELECT r.*
-//           FROM TB_Results r
-//           LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
-//           WHERE r.idOrder = @idOrder AND r.model = @model
-//           ORDER BY r.boxNumber, r.id
-//         `);
-//             currentResults = currentResultsQuery.recordset;
-//         }
-
-//         // Agregar hoja para el modelo principal
-//         if (results.length > 0) {
-//             const sheet = workbook.addWorksheet(model);
-//             sheet.columns = Object.keys(results[0]).map(key => ({ header: key, key }));
-//             results.forEach(row => sheet.addRow(row));
-//         }
-
-//         // Agregar hoja para el modelo Current...
-//         if (currentResults.length > 0) {
-//             const sheet = workbook.addWorksheet(currentModelName);
-//             sheet.columns = Object.keys(currentResults[0]).map(key => ({ header: key, key }));
-//             currentResults.forEach(row => sheet.addRow(row));
-//         }
-//     }
-
-//     res.setHeader(
-//         'Content-Type',
-//         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-//     );
-//     res.setHeader(
-//         'Content-Disposition',
-//         `attachment; filename=results_order_${idOrder}.xlsx`
-//     );
-//     await workbook.xlsx.write(res);
-//     res.end();
-// };
-
 export const downloadExcelResultsByOrder = async (
   idOrder: number,
   res: Response
@@ -222,6 +120,176 @@ export const downloadExcelResultsByOrder = async (
   res.setHeader(
     'Content-Disposition',
     `attachment; filename=results_order_${idOrder}.xlsx`
+  );
+
+  await workbook.xlsx.write(res);
+  res.end();
+};
+
+export const downloadExcelSumaryDataFromResults = async (
+  idOrder: number,
+  res: Response
+) => {
+  const db = await connectToSqlServer();
+  if (!db) throw new Error("No se pudo conectar a la base de datos");
+
+  const allowedModels = [
+    "EvenDistribution",
+    "EvenVolume",
+    "EvenVolumeDynamic",
+    "TopFrequencies",
+  ] as const;
+
+  const currentModels: Record<(typeof allowedModels)[number], string> = {
+    EvenDistribution: "CurrentEvenDistribution",
+    EvenVolume: "CurrentEvenVolume",
+    EvenVolumeDynamic: "CurrentEvenVolumeDynamic",
+    TopFrequencies: "CurrentTopFrequencies",
+  };
+
+  // Modelos presentes para este idOrder
+  const modelsResult = await db
+    .request()
+    .input("idOrder", idOrder)
+    .query(`
+      SELECT DISTINCT model
+      FROM TB_Results
+      WHERE idOrder = @idOrder
+    `);
+
+  const allModels: string[] = modelsResult.recordset.map((r: any) => r.model);
+  const filteredModels = allowedModels.filter(
+    (m) => allModels.includes(m) || allModels.includes(currentModels[m])
+  );
+
+  if (!filteredModels.length) {
+    res.status(404).json({ message: "No hay datos para este idOrder." });
+    return;
+  }
+
+  const workbook = new ExcelJS.Workbook();
+
+  // Util: set columnas y volcar filas
+  const writeRows = (sheetName: string, rows: any[]) => {
+    if (!rows?.length) return;
+    const sheet = workbook.addWorksheet(sheetName.substring(0, 31));
+    const headers = Object.keys(rows[0]);
+    sheet.columns = headers.map((k) => ({ header: k, key: k }));
+    rows.forEach((r) => sheet.addRow(r));
+  };
+
+  // Util: crea hoja Summary (summaryCards + stats crudos)
+  const writeSummary = (
+    model: string,
+    cards: { label: string; value: any }[],
+    stats: { totalBoxesUsed: any; minBoxNumber: any; maxBoxNumber: any }
+  ) => {
+    const sheet = workbook.addWorksheet(`${model}_Summary`.substring(0, 31));
+    sheet.columns = [
+      { header: "label", key: "label" },
+      { header: "value", key: "value" },
+    ];
+    cards.forEach((c) => sheet.addRow(c));
+    sheet.addRow({});
+    sheet.addRow({ label: "totalBoxesUsed", value: stats.totalBoxesUsed });
+    sheet.addRow({ label: "minBoxNumber", value: stats.minBoxNumber });
+    sheet.addRow({ label: "maxBoxNumber", value: stats.maxBoxNumber });
+  };
+
+  for (const model of filteredModels) {
+    const currentModelName = currentModels[model];
+    const modelExists = allModels.includes(model);
+    const currentExists = allModels.includes(currentModelName);
+
+    // === Stats / summaryCards (como en tu API) ===
+    const statsResult = await db
+      .request()
+      .input("idOrder", idOrder)
+      .query(`
+        SELECT 
+          currentBoxUsed AS totalBoxesUsed,
+          minimunNumBox AS minBoxNumber,
+          maximunNumBox AS maxBoxNumber
+        FROM TB_AttributeData
+        WHERE idOrder = @idOrder
+      `);
+
+    const {
+      totalBoxesUsed,
+      minBoxNumber,
+      maxBoxNumber
+    } = statsResult.recordset[0] || {
+      totalBoxesUsed: 0,
+      minBoxNumber: null,
+      maxBoxNumber: null
+    };
+
+    const summaryCards = [
+      { label: "Current Number of Boxes Used", value: totalBoxesUsed },
+      { label: "Minimum Number of Boxes to Analyze", value: minBoxNumber },
+      { label: "Maximum Number of Boxes to Analyze", value: maxBoxNumber },
+    ];
+
+    // === Resultados por boxNumber (modelo optimizado), SIN paginar ===
+    if (modelExists) {
+      const resultsQuery = await db
+        .request()
+        .input("idOrder", idOrder)
+        .input("model", model)
+        .query(`
+          SELECT idOrder, model, boxNumber,
+                 SUM(CAST(newBillableWeight   AS FLOAT))            AS newBillableWeight,
+                 SUM(CAST(newFreightCost      AS FLOAT))            AS newFreightCost,
+                 SUM(CAST(newVoidVolume       AS FLOAT))            AS newVoidVolume,
+                 SUM(CAST(newVoidFillCost     AS FLOAT))            AS newVoidFillCost,
+                 SUM(CAST(newBoxCorrugateArea AS FLOAT)) / 144      AS newBoxCorrugateArea,
+                 SUM(CAST(newBoxCorrugateCost AS FLOAT))            AS newBoxCorrugateCost
+          FROM TB_Results
+          WHERE idOrder = @idOrder AND model = @model
+          GROUP BY idOrder, model, boxNumber
+          ORDER BY boxNumber
+        `);
+
+      const results = resultsQuery.recordset || [];
+      writeRows(`${model}_Results`, results);
+    }
+
+    // === Resultados current por boxNumber (si existen) ===
+    if (currentExists) {
+      const currentQuery = await db
+        .request()
+        .input("idOrder", idOrder)
+        .input("model", currentModelName)
+        .query(`
+          SELECT idOrder, model, boxNumber,
+                 SUM(CAST(newBillableWeight   AS FLOAT))            AS newBillableWeight,
+                 SUM(CAST(newFreightCost      AS FLOAT))            AS newFreightCost,
+                 SUM(CAST(newVoidVolume       AS FLOAT))            AS newVoidVolume,
+                 SUM(CAST(newVoidFillCost     AS FLOAT))            AS newVoidFillCost,
+                 SUM(CAST(newBoxCorrugateArea AS FLOAT)) / 144      AS newBoxCorrugateArea,
+                 SUM(CAST(newBoxCorrugateCost AS FLOAT))            AS newBoxCorrugateCost
+          FROM TB_Results
+          WHERE idOrder = @idOrder AND model = @model
+          GROUP BY idOrder, model, boxNumber
+          ORDER BY boxNumber
+        `);
+
+      const currentRows = currentQuery.recordset || [];
+      writeRows(`${currentModelName}_Results`, currentRows);
+    }
+
+    // === Hoja Summary ===
+    writeSummary(model, summaryCards, { totalBoxesUsed, minBoxNumber, maxBoxNumber });
+  }
+
+  // Descargar
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename=sumaryData_order_${idOrder}.xlsx`
   );
 
   await workbook.xlsx.write(res);

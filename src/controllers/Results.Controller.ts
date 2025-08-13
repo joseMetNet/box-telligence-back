@@ -2,6 +2,7 @@ import { RequestHandler } from "express";
 import * as repository from '../repository/Results.repository';
 import { parseMessageI18n } from '../utils/parse-messga-i18';
 import { IExistsResultResponse, IValidateResultResponse } from "../interface/Results.Interface";
+import { downloadExcelSumaryDataFromResults } from "../repository/ResultsDownloadExcel.Repository";
 
 export const runEvenDistributionModelController: RequestHandler = async (req, res) => {
   try {
@@ -185,6 +186,24 @@ export const getBoxDimensionsResultController: RequestHandler = async (req, res)
     res.status(500).json({
       message: "error_server",
       error: err.message,
+    });
+  }
+};
+
+export const downloadSumaryDataFromResultsController: RequestHandler = async (req, res) => {
+  try {
+    const { idOrder } = req.params;
+    if (!idOrder || isNaN(Number(idOrder))) {
+      return res.status(400).json({
+        message: { translationKey: "excel.required_field_text", translationParams: { name: "idOrder" } },
+      });
+    }
+
+    await downloadExcelSumaryDataFromResults(Number(idOrder), res);
+  } catch (err) {
+    console.error("Error in downloadSumaryDataFromResultsController:", err);
+    res.status(500).json({
+      message: { translationKey: "error_server", translationParams: { name: "downloadSumaryDataFromResultsController" } },
     });
   }
 };
