@@ -610,47 +610,18 @@ companyRouter.get("/file-details", getCompanyFileDetailsByDate);
  *   delete:
  *     tags:
  *       - Companies
- *     summary: Delete file for a company
- *     description: Deletes a file (Box Kit File or Shipment Data File) associated with a company based on its ID.
+ *     summary: Delete all files and related data for an order
+ *     description: Deletes every record associated with the given order (results, kit boxes, box kit file, shipment data file, and name file) using the idOrder.
  *     parameters:
  *       - in: path
  *         name: id
  *         required: true
  *         schema:
  *           type: integer
- *         description: ID of the file to delete (related to idOrder)
- *       - in: query
- *         name: fileType
- *         required: true
- *         schema:
- *           type: string
- *           enum: [Box Kit File, Shipment Data File]
- *         description: Type of file to delete
+ *         description: Order ID (idOrder) whose related data will be deleted
  *     responses:
  *       200:
- *         description: File successfully deleted
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 code:
- *                   type: integer
- *                   example: 200
- *                 message:
- *                   type: object
- *                   properties:
- *                     translationKey:
- *                       type: string
- *                       example: company.file_deleted
- *                     translationParams:
- *                       type: object
- *                       properties:
- *                         name:
- *                           type: string
- *                           example: deleteFileCompany
- *       400:
- *         description: Bad request due to invalid input
+ *         description: Data successfully deleted
  *         content:
  *           application/json:
  *             schema:
@@ -658,7 +629,40 @@ companyRouter.get("/file-details", getCompanyFileDetailsByDate);
  *               properties:
  *                 message:
  *                   type: string
- *                   example: Invalid ID or file type
+ *                   example: company.successful
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     deletedResults:
+ *                       type: integer
+ *                     deletedKitBoxes:
+ *                       type: integer
+ *                     deletedBoxKitFile:
+ *                       type: integer
+ *                     deletedShipmentDataFile:
+ *                       type: integer
+ *                     deletedNameFile:
+ *                       type: integer
+ *                     totalDeleted:
+ *                       type: integer
+ *       404:
+ *         description: No records found for the given idOrder
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *       400:
+ *         description: Invalid ID supplied
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
  *       500:
  *         description: Internal server error
  *         content:
@@ -668,7 +672,6 @@ companyRouter.get("/file-details", getCompanyFileDetailsByDate);
  *               properties:
  *                 message:
  *                   type: string
- *                   example: Internal server error
  */
 companyRouter.delete("/file-company/:id", deleteFileCompanyController);
 

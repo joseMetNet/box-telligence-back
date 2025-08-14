@@ -508,7 +508,7 @@ export const getCompanyFileDetailsByDate = async (data: { id: number, fileType: 
 };
 
 export const deleteFileCompany = async (
-  data: { id: number; fileType?: "Box Kit File" | "Shipment Data File" }
+  data: { id: number }
 ): Promise<IresponseRepositoryService> => {
   try {
     const { id } = data;
@@ -521,6 +521,8 @@ export const deleteFileCompany = async (
     }
 
     const query = `
+      SET XACT_ABORT ON;
+
       DECLARE @delResults           INT = 0,
               @delKitBoxes          INT = 0,
               @delNameFile          INT = 0,
@@ -530,19 +532,19 @@ export const deleteFileCompany = async (
       BEGIN TRY
         BEGIN TRAN;
 
-        DELETE FROM TB_Results  WHERE idOrder = @idOrder;
+        DELETE FROM TB_Results            WHERE idOrder = @idOrder;
         SET @delResults = @@ROWCOUNT;
 
-        DELETE FROM TB_KitBoxes WHERE idOrder = @idOrder;
+        DELETE FROM TB_KitBoxes           WHERE idOrder = @idOrder;
         SET @delKitBoxes = @@ROWCOUNT;
 
-        DELETE FROM TB_BoxKitFile WHERE idOrder = @idOrder;
+        DELETE FROM TB_BoxKitFile         WHERE idOrder = @idOrder;
         SET @delBoxKitFile = @@ROWCOUNT;
 
-        DELETE FROM TB_ShipmentDataFile WHERE idOrder = @idOrder;
+        DELETE FROM TB_ShipmentDataFile   WHERE idOrder = @idOrder;
         SET @delShipmentDataFile = @@ROWCOUNT;
 
-        DELETE FROM TB_NameFile WHERE idOrder = @idOrder;
+        DELETE FROM TB_NameFile           WHERE idOrder = @idOrder;
         SET @delNameFile = @@ROWCOUNT;
 
         COMMIT TRAN;

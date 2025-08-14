@@ -138,23 +138,18 @@ export const getCompanyFileDetailsByDate: RequestHandler = async (req, res) => {
 };
 
 export const deleteFileCompanyController: RequestHandler = async (req, res) => {
-    try {
-        const id = Number(req.params.id);
-        const fileType = req.query.fileType as string;
+  try {
+    const id = Number(req.params.id);
 
-        if (isNaN(id)) {
-            return res.status(400).json({ message: parseMessageI18n("companies.invalid_id", req) });
-        }
-
-        if (!fileType || (fileType !== "Box Kit File" && fileType !== "Shipment Data File")) {
-            return res.status(400).json({ message: parseMessageI18n("company.invalid_file_type", req) });
-        }
-
-        const { code, message, ...resto }: IresponseRepositoryService = await repository.deleteFileCompany({ id, fileType });
-
-        res.status(code).json({ message: parseMessageI18n(message, req), ...resto });
-    } catch (err) {
-        console.error("Error in deleteFileCompanyController:", err);
-        res.status(500).json({ message: parseMessageI18n("error_server", req) });
+    if (isNaN(id)) {
+      return res.status(400).json({ message: parseMessageI18n("companies.invalid_id", req) });
     }
+
+    const { code, message, ...resto }: IresponseRepositoryService = await repository.deleteFileCompany({ id });
+
+    return res.status(code).json({ message: parseMessageI18n(message, req), ...resto });
+  } catch (err) {
+    console.error("Error in deleteFileCompanyController:", err);
+    return res.status(500).json({ message: parseMessageI18n("error_server", req) });
+  }
 };
