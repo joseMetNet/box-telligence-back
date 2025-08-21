@@ -698,7 +698,7 @@ export const uploadExcelShipmentDataFile = async (
 ): Promise<IresponseRepositoryService> => {
   try {
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(fileBuffer);
+    await workbook.xlsx.load(fileBuffer as unknown as any);
 
     const worksheet = workbook.getWorksheet('ShipmentDataFile') || workbook.worksheets[0];
     if (!worksheet) {
