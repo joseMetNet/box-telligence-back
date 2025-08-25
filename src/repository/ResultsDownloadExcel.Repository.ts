@@ -147,7 +147,6 @@ export const downloadExcelSumaryDataFromResults = async (
     TopFrequencies: "CurrentTopFrequencies",
   };
 
-  // Modelos presentes para este idOrder
   const modelsResult = await db
     .request()
     .input("idOrder", idOrder)
@@ -169,7 +168,6 @@ export const downloadExcelSumaryDataFromResults = async (
 
   const workbook = new ExcelJS.Workbook();
 
-  // Util: set columnas y volcar filas
   const writeRows = (sheetName: string, rows: any[]) => {
     if (!rows?.length) return;
     const sheet = workbook.addWorksheet(sheetName.substring(0, 31));
@@ -178,7 +176,6 @@ export const downloadExcelSumaryDataFromResults = async (
     rows.forEach((r) => sheet.addRow(r));
   };
 
-  // Util: crea hoja Summary (summaryCards + stats crudos)
   const writeSummary = (
     model: string,
     cards: { label: string; value: any }[],
@@ -201,7 +198,6 @@ export const downloadExcelSumaryDataFromResults = async (
     const modelExists = allModels.includes(model);
     const currentExists = allModels.includes(currentModelName);
 
-    // === Stats / summaryCards (como en tu API) ===
     const statsResult = await db
       .request()
       .input("idOrder", idOrder)
@@ -230,7 +226,6 @@ export const downloadExcelSumaryDataFromResults = async (
       { label: "Maximum Number of Boxes to Analyze", value: maxBoxNumber },
     ];
 
-    // === Resultados por boxNumber (modelo optimizado), SIN paginar ===
     if (modelExists) {
       const resultsQuery = await db
         .request()
@@ -254,7 +249,6 @@ export const downloadExcelSumaryDataFromResults = async (
       writeRows(`${model}_Results`, results);
     }
 
-    // === Resultados current por boxNumber (si existen) ===
     if (currentExists) {
       const currentQuery = await db
         .request()
@@ -262,12 +256,12 @@ export const downloadExcelSumaryDataFromResults = async (
         .input("model", currentModelName)
         .query(`
           SELECT idOrder, model, boxNumber,
-                 SUM(CAST(newBillableWeight   AS FLOAT))            AS newBillableWeight,
-                 SUM(CAST(newFreightCost      AS FLOAT))            AS newFreightCost,
-                 SUM(CAST(newVoidVolume       AS FLOAT))            AS newVoidVolume,
-                 SUM(CAST(newVoidFillCost     AS FLOAT))            AS newVoidFillCost,
-                 SUM(CAST(newBoxCorrugateArea AS FLOAT)) / 144      AS newBoxCorrugateArea,
-                 SUM(CAST(newBoxCorrugateCost AS FLOAT))            AS newBoxCorrugateCost
+                 SUM(CAST(currentBillableWeight   AS FLOAT))            AS currentBillableWeight,
+                 SUM(CAST(currentFreightCost      AS FLOAT))            AS currentFreightCost,
+                 SUM(CAST(currentVoidVolume       AS FLOAT))            AS currentVoidVolume,
+                 SUM(CAST(currentVoidFillCost     AS FLOAT))            AS currentVoidFillCost,
+                 SUM(CAST(currentBoxCorrugateArea AS FLOAT)) / 144      AS currentBoxCorrugateArea,
+                 SUM(CAST(currentBoxCorrugateCost AS FLOAT))            AS currentBoxCorrugateCost
           FROM TB_Results
           WHERE idOrder = @idOrder AND model = @model
           GROUP BY idOrder, model, boxNumber
@@ -278,11 +272,9 @@ export const downloadExcelSumaryDataFromResults = async (
       writeRows(`${currentModelName}_Results`, currentRows);
     }
 
-    // === Hoja Summary ===
     writeSummary(model, summaryCards, { totalBoxesUsed, minBoxNumber, maxBoxNumber });
   }
 
-  // Descargar
   res.setHeader(
     "Content-Type",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
