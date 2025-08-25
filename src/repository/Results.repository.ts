@@ -39,7 +39,7 @@ export const getResultsByOrder = async (
     (model) => allModels.includes(model) || allModels.includes(currentModels[model])
   );
 
-  const modelGroups = [];
+  const modelGroups: any[] = [];
 
   for (const model of filteredModels) {
     const modelExists = allModels.includes(model);
@@ -90,10 +90,10 @@ export const getResultsByOrder = async (
 
         const resultQuery = await request.query(`
           SELECT idOrder, model, boxNumber,
-                 SUM(CAST(newBillableWeight AS FLOAT)) AS newBillableWeight,
-                 SUM(CAST(newFreightCost AS FLOAT)) AS newFreightCost,
-                 SUM(CAST(newVoidVolume AS FLOAT)) AS newVoidVolume,
-                 SUM(CAST(newVoidFillCost AS FLOAT)) AS newVoidFillCost,
+                 SUM(CAST(newBillableWeight   AS FLOAT)) AS newBillableWeight,
+                 SUM(CAST(newFreightCost     AS FLOAT)) AS newFreightCost,
+                 SUM(CAST(newVoidVolume      AS FLOAT)) AS newVoidVolume,
+                 SUM(CAST(newVoidFillCost    AS FLOAT)) AS newVoidFillCost,
                  SUM(CAST(newBoxCorrugateArea AS FLOAT)) / 144 AS newBoxCorrugateArea,
                  SUM(CAST(newBoxCorrugateCost AS FLOAT)) AS newBoxCorrugateCost
           FROM TB_Results
@@ -112,9 +112,9 @@ export const getResultsByOrder = async (
       .input("idOrder", idOrder)
       .query(`
         SELECT 
-          currentBoxUsed AS totalBoxesUsed,
-          minimunNumBox AS minBoxNumber,
-          maximunNumBox AS maxBoxNumber
+          currentBoxUsed   AS totalBoxesUsed,
+          minimunNumBox    AS minBoxNumber,
+          maximunNumBox    AS maxBoxNumber
         FROM TB_AttributeData
         WHERE idOrder = @idOrder
       `);
@@ -143,12 +143,12 @@ export const getResultsByOrder = async (
         .input("model", currentModelName)
         .query(`
           SELECT idOrder, model, boxNumber,
-                 SUM(CAST(newBillableWeight AS FLOAT)) AS newBillableWeight,
-                 SUM(CAST(newFreightCost AS FLOAT)) AS newFreightCost,
-                 SUM(CAST(newVoidVolume AS FLOAT)) AS newVoidVolume,
-                 SUM(CAST(newVoidFillCost AS FLOAT)) AS newVoidFillCost,
-                 SUM(CAST(newBoxCorrugateArea AS FLOAT)) / 144 AS newBoxCorrugateArea,
-                 SUM(CAST(newBoxCorrugateCost AS FLOAT)) AS newBoxCorrugateCost
+                 SUM(CAST(currentBillableWeight   AS FLOAT)) AS newBillableWeight,
+                 SUM(CAST(currentFreightCost     AS FLOAT)) AS newFreightCost,
+                 SUM(CAST(currentVoidVolume      AS FLOAT)) AS newVoidVolume,
+                 SUM(CAST(currentVoidFillCost    AS FLOAT)) AS newVoidFillCost,
+                 SUM(CAST(currentBoxCorrugateArea AS FLOAT)) / 144 AS newBoxCorrugateArea,
+                 SUM(CAST(currentBoxCorrugateCost AS FLOAT)) AS newBoxCorrugateCost
           FROM TB_Results
           WHERE idOrder = @idOrder AND model = @model
           GROUP BY idOrder, model, boxNumber
@@ -249,12 +249,12 @@ export const getModelImprovementByIdOrder = async (
     .input("model", currentModel)
     .query(`
       SELECT
-        SUM(CAST(newBillableWeight AS FLOAT)) AS newBillableWeight,
-        SUM(CAST(newFreightCost AS FLOAT)) AS newFreightCost,
-        SUM(CAST(newVoidVolume AS FLOAT)) AS newVoidVolume,
-        SUM(CAST(newVoidFillCost AS FLOAT)) AS newVoidFillCost,
-        SUM(CAST(newBoxCorrugateArea AS FLOAT)) / 144 AS newBoxCorrugateArea,
-        SUM(CAST(newBoxCorrugateCost AS FLOAT)) AS newBoxCorrugateCost
+        SUM(CAST(currentBillableWeight AS FLOAT)) AS newBillableWeight,
+        SUM(CAST(currentFreightCost AS FLOAT)) AS newFreightCost,
+        SUM(CAST(currentVoidVolume AS FLOAT)) AS newVoidVolume,
+        SUM(CAST(currentVoidFillCost AS FLOAT)) AS newVoidFillCost,
+        SUM(CAST(currentBoxCorrugateArea AS FLOAT)) / 144 AS newBoxCorrugateArea,
+        SUM(CAST(currentBoxCorrugateCost AS FLOAT)) AS newBoxCorrugateCost
       FROM TB_Results
       WHERE idOrder = @idOrder AND model = @model
     `);
