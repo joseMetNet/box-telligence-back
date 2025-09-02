@@ -1,6 +1,7 @@
 import { connectToSqlServer } from "../DB/config";
 import { ShipmentItem, IResultsPaginated, IResult } from "../interface/Results.Interface";
 import _ from 'lodash';
+import * as sql from 'mssql';
 
 export const getResultsByOrder = async (
   idOrder: number,
@@ -451,1018 +452,7 @@ function computeHeuristicAABBShippingBox(items: { length: number, width: number,
   return bestBox ? { ...bestBox, method: bestMethod } : null;
 }
 
-async function executeEvenVolume(
-  db: any,
-  items: ShipmentItem[],
-  attrData: any,
-  idOrder: number,
-  numBoxes: number,
-  dimWeightFactor: number,
-  packMaterialCost: number,
-  corrugateCostPerSf: number,
-  freightCostPerLb: number,
-  modelName: string,
-  fixedBoxLength?: number,
-  fixedBoxWidth?: number,
-  fixedBoxHeight?: number
-) {
-  if (!items.length) throw new Error("No items to process");
-
-  type EnrichedItem = ShipmentItem & {
-    itemVolume: number;
-    cumulativeVolume?: number;
-    cumulativePercentage?: number;
-  };
-
-  const enrichedItems: EnrichedItem[] = items.map(item => ({
-    ...item,
-    itemVolume: safeFloat(item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight)
-  })).sort((a, b) => b.cubedItemLength - a.cubedItemLength);
-
-  const totalVolume = enrichedItems.reduce((sum, item) => sum + item.itemVolume, 0);
-
-  let cumulativeVolume = 0;
-  enrichedItems.forEach(item => {
-    cumulativeVolume += item.itemVolume;
-    item.cumulativeVolume = cumulativeVolume;
-    item.cumulativePercentage = cumulativeVolume / totalVolume;
-  });
-
-  const cutPoints: number[] = [];
-  const volumeTargets = Array.from({ length: numBoxes - 1 }, (_, i) => (i + 1) / numBoxes);
-
-  for (const target of volumeTargets) {
-    const passedIdx = enrichedItems.findIndex(it => (it.cumulativePercentage ?? 0) >= target);
-    if (passedIdx === -1) continue;
-    const anchorLength = enrichedItems[passedIdx].cubedItemLength;
-    const trueCutIndex = enrichedItems.findIndex(it => it.cubedItemLength === anchorLength);
-    cutPoints.push(trueCutIndex);
-  }
-  cutPoints.push(enrichedItems.length);
-
-  const segments: ShipmentItem[][] = [];
-  let start = 0;
-  for (const end of cutPoints) {
-    const segment = enrichedItems.slice(start, end);
-    segments.push(segment);
-    start = end;
-  }
-
-  for (let i = 0; i < segments.length; i++) {
-    const segItems = segments[i];
-    const boxLength = safeFloat(fixedBoxLength ?? Math.max(...segItems.map(it => it.cubedItemLength)));
-    const boxWidth = safeFloat(fixedBoxWidth ?? Math.max(...segItems.map(it => it.cubedItemWidth)));
-    const boxHeight = safeFloat(fixedBoxHeight ?? Math.max(...segItems.map(it => it.cubedItemHeight)));
-
-    if (!Number.isFinite(boxLength) || !Number.isFinite(boxWidth) || !Number.isFinite(boxHeight)) {
-      throw new Error(`Invalid box dimensions: ${boxLength}x${boxWidth}x${boxHeight}`);
-    }
-
-    await db.request()
-      .input("idOrder", idOrder)
-      .input("boxLabel", `Box ${i + 1}`)
-      .input("boxNumber", numBoxes)
-      .input("boxLength", boxLength)
-      .input("boxWidth", boxWidth)
-      .input("boxHeight", boxHeight)
-      .input("fromRow", 0)
-      .input("toRow", 0)
-      .input("model", modelName)
-      .input("numBoxes", numBoxes)
-      .query(`
-        INSERT INTO TB_KitBoxes (
-          idOrder, boxLabel, boxNumber,
-          boxLength, boxWidth, boxHeight,
-          fromRow, toRow, model, numBoxes
-        )
-        VALUES (
-          @idOrder, @boxLabel, @boxNumber,
-          @boxLength, @boxWidth, @boxHeight,
-          @fromRow, @toRow, @model, @numBoxes
-        )
-      `);
-  }
-
-  const uniqueItemMap = new Map<number, { boxLength: number; boxWidth: number; boxHeight: number }>();
-  for (const item of items) {
-    let foundSegment: ShipmentItem[] | undefined;
-    for (const seg of segments) {
-      if (seg.some(s => s.id === item.id)) {
-        foundSegment = seg;
-        break;
-      }
-    }
-    if (!foundSegment) continue;
-
-    const boxLength = safeFloat(fixedBoxLength ?? Math.max(...foundSegment.map(it => it.cubedItemLength)));
-    const boxWidth = safeFloat(fixedBoxWidth ?? Math.max(...foundSegment.map(it => it.cubedItemWidth)));
-    const boxHeight = safeFloat(fixedBoxHeight ?? Math.max(...foundSegment.map(it => it.cubedItemHeight)));
-
-    uniqueItemMap.set(item.id, { boxLength, boxWidth, boxHeight });
-  }
-
-  const MAX_BATCH_SIZE = 500;
-  const valuesList: string[] = [];
-
-  for (const item of items) {
-    const boxDims = uniqueItemMap.get(item.id);
-    if (!boxDims) continue;
-
-    const { boxLength, boxWidth, boxHeight } = boxDims;
-
-    const currentArea = safeFloat(
-      2 * item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
-      2 * item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth)
-    );
-    const newArea = safeFloat(
-      2 * boxLength * (boxWidth + boxHeight) +
-      2 * boxWidth * (boxWidth + boxHeight)
-    );
-
-    const currentCorrugateCost = safeFloat((currentArea / 144) * corrugateCostPerSf);
-    const newCorrugateCost = safeFloat((newArea / 144) * corrugateCostPerSf);
-
-    const currentDimWeight = safeFloat((item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight) / dimWeightFactor);
-    const newDimWeight = safeFloat((boxLength * boxWidth * boxHeight) / dimWeightFactor);
-
-    const currentBillableWeight = safeFloat(Math.max(item.cubedItemWeight, currentDimWeight));
-    const newBillableWeight = safeFloat(Math.max(item.cubedItemWeight, newDimWeight));
-
-    const currentVoidVolume = safeFloat((item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight
-      - item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight) / 1728);
-    const newVoidVolume = safeFloat((boxLength * boxWidth * boxHeight
-      - item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight) / 1728);
-          const currentFreightCost = currentBillableWeight * freightCostPerLb;
-      const newFreightCost = newBillableWeight * freightCostPerLb;
-
-    const currentVoidFillCost = safeFloat(currentVoidVolume * packMaterialCost);
-    const newVoidFillCost = safeFloat(newVoidVolume * packMaterialCost);
-
-    valuesList.push(`(
-      ${idOrder}, ${attrData.id}, ${item.id}, '${modelName}', ${numBoxes},
-      ${boxLength}, ${boxWidth}, ${boxHeight},
-      ${currentArea}, ${newArea},
-      ${currentCorrugateCost}, ${newCorrugateCost},
-      ${currentDimWeight}, ${newDimWeight},
-      ${currentBillableWeight}, ${newBillableWeight},
-      ${currentFreightCost}, ${newFreightCost},
-      ${currentVoidVolume}, ${newVoidVolume},
-      ${currentVoidFillCost}, ${newVoidFillCost}
-    )`);
-  }
-
-  for (let i = 0; i < valuesList.length; i += MAX_BATCH_SIZE) {
-    const chunk = valuesList.slice(i, i + MAX_BATCH_SIZE);
-    const sql = `
-      INSERT INTO TB_Results (
-        idOrder, idAttributeData, idShipmenDataFile, model, boxNumber,
-        newAssignedBoxLength, newAssignedBoxWidth, newAssignedBoxHeight,
-        currentBoxCorrugateArea, newBoxCorrugateArea,
-        currentBoxCorrugateCost, newBoxCorrugateCost,
-        currentDimWeight, newDimWeight,
-        currentBillableWeight, newBillableWeight,
-        currentFreightCost, newFreightCost,
-        currentVoidVolume, newVoidVolume,
-        currentVoidFillCost, newVoidFillCost
-      )
-      VALUES
-      ${chunk.join(',\n')}
-    `;
-    await db.request().query(sql);
-  }
-}
-
-function safeFloat(value: any, decimals = 2): number {
-  const num = parseFloat(value);
-  if (isNaN(num) || !isFinite(num)) return 0;
-  return parseFloat(num.toFixed(decimals));
-}
-
-// export const runEvenVolumeDinamicoModel = async (idOrder: number) => {
-//   const db = await connectToSqlServer();
-//   if (!db) throw new Error("No se pudo conectar a la base de datos");
-
-//   const itemsResult = await db.request().input("idOrder", idOrder).query(`
-//     SELECT * FROM TB_ShipmentDataFile WHERE idOrder = @idOrder ORDER BY cubedItemLength DESC
-//   `);
-//   if (!itemsResult?.recordset?.length) throw new Error("No shipment data found for this order");
-
-//   const row = itemsResult.recordset[0];
-//   const isNormalized =
-//     row.cubedItemLength > 0 &&
-//     row.cubedItemWidth > 0 &&
-//     row.cubedItemHeight > 0 &&
-//     row.cubedItemWeight > 0;
-
-//   const items: ShipmentItem[] = isNormalized
-//     ? itemsResult.recordset
-//     : itemsResult.recordset.flatMap(applyAABBHeuristic);
-
-//   if (!items.length) throw new Error("No valid items found for processing");
-
-//   const attrDataResult = await db.request().input("idOrder", idOrder).query(`
-//     SELECT * FROM TB_AttributeData WHERE idOrder = @idOrder
-//   `);
-//   if (!attrDataResult?.recordset?.length) throw new Error("No attribute data found for this order");
-//   const attrData = attrDataResult.recordset[0];
-
-//   const runCurrentBoxKitOnly = Number(attrData.runCurrentBoxKitOnly);
-//   const currentBoxUsed = Number(attrData.currentBoxUsed);
-//   const dimWeightFactor = attrData.dimWeightFactor;
-//   const packMaterialCost = attrData.packMaterialCost;
-//   const corrugateCostPerSf = attrData.corrugateCost;
-//   const freightCostPerLb = attrData.freightCostPerLb;
-
-//   const numBoxesArray = runCurrentBoxKitOnly === 0
-//     ? Array.from(
-//         { length: attrData.maximunNumBox - attrData.minimunNumBox + 1 },
-//         (_, i) => attrData.minimunNumBox + i
-//       )
-//     : [];
-
-//   await Promise.all(
-//     numBoxesArray.map(numBoxes =>
-//       executeEvenVolumeDinamico(
-//         db,
-//         items,
-//         attrData,
-//         idOrder,
-//         numBoxes,
-//         dimWeightFactor,
-//         packMaterialCost,
-//         corrugateCostPerSf,
-//         freightCostPerLb,
-//         "EvenVolumeDynamic"
-//       )
-//     )
-//   );
-
-//   try {
-//     const boxKitResult = await db.request().input("idOrder", idOrder).query(`
-//       SELECT TOP 1 * FROM TB_BoxKitFile 
-//       WHERE idOrder = @idOrder 
-//       ORDER BY length DESC
-//     `);
-//     if (!boxKitResult?.recordset?.length)
-//       throw new Error("No box kit found for this order");
-
-//     const box = boxKitResult.recordset[0];
-
-//     await executeEvenVolumeDinamico(
-//       db,
-//       items,
-//       attrData,
-//       idOrder,
-//       currentBoxUsed,
-//       dimWeightFactor,
-//       packMaterialCost,
-//       corrugateCostPerSf,
-//       freightCostPerLb,
-//       "CurrentEvenVolumeDynamic",
-//       box.length,
-//       box.width,
-//       box.height
-//     );
-//   } catch (err) {
-//     if (err && typeof err === "object" && "message" in err) {
-//       console.warn(`No se pudo ejecutar CurrentEvenVolumeDynamic: ${(err as any).message}`);
-//     } else {
-//       console.warn(`No se pudo ejecutar CurrentEvenVolumeDynamic:`, err);
-//     }
-//   }
-
-//   return {
-//     success: true,
-//     message: "RunEvenVolumeDynamic model completed successfully (with dynamic volume)"
-//   };
-// };
-export const runEvenVolumeDinamicoModel = async (idOrder: number) => {
-  const db = await connectToSqlServer();
-  if (!db) throw new Error("No se pudo conectar a la base de datos");
-
-  const itemsResult = await db.request()
-    .input("idOrder", idOrder)
-    .query(`
-      SELECT *
-      FROM TB_ShipmentDataFile
-      WHERE idOrder = @idOrder
-      ORDER BY cubedItemLength DESC
-    `);
-  if (!itemsResult?.recordset?.length) {
-    throw new Error("No shipment data found for this order");
-  }
-
-  const row = itemsResult.recordset[0];
-  const isNormalized =
-    row.cubedItemLength > 0 &&
-    row.cubedItemWidth  > 0 &&
-    row.cubedItemHeight > 0 &&
-    row.cubedItemWeight > 0;
-
-  const items: ShipmentItem[] = isNormalized
-    ? itemsResult.recordset
-    : itemsResult.recordset.flatMap(applyAABBHeuristic);
-
-  if (!items.length) throw new Error("No valid items found for processing");
-
-  const attrDataResult = await db.request()
-    .input("idOrder", idOrder)
-    .query(`SELECT * FROM TB_AttributeData WHERE idOrder = @idOrder`);
-  if (!attrDataResult?.recordset?.length) {
-    throw new Error("No attribute data found for this order");
-  }
-  const attrData = attrDataResult.recordset[0];
-
-  const runCurrentBoxKitOnly = Number(attrData.runCurrentBoxKitOnly);
-  const currentBoxUsed       = Number(attrData.currentBoxUsed) || 0;
-
-  const dimWeightFactor     = attrData.dimWeightFactor;
-  const packMaterialCost    = attrData.packMaterialCost;
-  const corrugateCostPerSf  = attrData.corrugateCost;
-  const freightCostPerLb    = attrData.freightCostPerLb;
-
-  const minBoxes = Number(attrData.minimunNumBox);
-  const maxBoxes = Number(attrData.maximunNumBox);
-
-  const jobs: Promise<any>[] = [];
-
-  if (runCurrentBoxKitOnly === 0) {
-    const numBoxesArray = Array.from(
-      { length: maxBoxes - minBoxes + 1 },
-      (_, i) => minBoxes + i
-    );
-
-    for (const numBoxes of numBoxesArray) {
-      jobs.push(
-        executeEvenVolumeDinamico(
-          db,
-          items,
-          attrData,
-          idOrder,
-          numBoxes,
-          dimWeightFactor,
-          packMaterialCost,
-          corrugateCostPerSf,
-          freightCostPerLb,
-          "EvenVolumeDynamic"
-        )
-      );
-    }
-
-    if (currentBoxUsed > 0) {
-      jobs.push(
-        executeEvenVolumeDinamico(
-          db,
-          items,
-          attrData,
-          idOrder,
-          currentBoxUsed,
-          dimWeightFactor,
-          packMaterialCost,
-          corrugateCostPerSf,
-          freightCostPerLb,
-          "CurrentEvenVolumeDynamic"
-        )
-      );
-    }
-  } else {
-    // 3c) Modo "solo current"
-    if (currentBoxUsed <= 0) {
-      throw new Error("Attribute 'currentBoxUsed' must be > 0 when runCurrentBoxKitOnly = 1");
-    }
-
-    jobs.push(
-      executeEvenVolumeDinamico(
-        db,
-        items,
-        attrData,
-        idOrder,
-        currentBoxUsed,
-        dimWeightFactor,
-        packMaterialCost,
-        corrugateCostPerSf,
-        freightCostPerLb,
-        "CurrentEvenVolumeDynamic"
-      )
-    );
-  }
-
-  await Promise.all(jobs);
-
-  return {
-    success: true,
-    message: "RunEvenVolumeDynamic model completed successfully (sin BoxKit)."
-  };
-};
-export async function executeEvenVolumeDinamico(
-  db: any,
-  items: ShipmentItem[],
-  attrData: any,
-  idOrder: number,
-  numBoxes: number,
-  dimWeightFactor: number,
-  packMaterialCost: number,
-  corrugateCostPerSf: number,
-  freightCostPerLb: number,
-  modelName: string,
-  fixedBoxLength?: number,
-  fixedBoxWidth?: number,
-  fixedBoxHeight?: number
-) {
-  if (!items.length) throw new Error("No items to process");
-
-  const enrichedItems = items.map(item => ({
-    ...item,
-    itemVolume: item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight
-  })).sort((a, b) => b.cubedItemLength - a.cubedItemLength);
-
-  const totalVolume = enrichedItems.reduce((sum, item) => sum + item.itemVolume, 0);
-  let cumulativeVolume = 0;
-  enrichedItems.forEach(item => {
-    cumulativeVolume += item.itemVolume;
-    (item as any).cumVolume = cumulativeVolume;
-    (item as any).cumVolumePct = cumulativeVolume / totalVolume;
-  });
-
-  const boxes1 = Math.round(numBoxes * 0.3);
-  const boxes2 = Math.round(numBoxes * 0.4);
-  const boxes3 = numBoxes - boxes1 - boxes2;
-
-  const cut1Idx = enrichedItems.findIndex(i => (i as any).cumVolumePct >= boxes1 / numBoxes);
-  const cut2Idx = enrichedItems.findIndex(i => (i as any).cumVolumePct >= (boxes1 + boxes2) / numBoxes);
-
-  const segment1 = enrichedItems.slice(0, cut1Idx);
-  const segment2 = enrichedItems.slice(cut1Idx, cut2Idx);
-  const segment3 = enrichedItems.slice(cut2Idx);
-
-  const splitSegment = (segment: typeof enrichedItems, n: number) => {
-    if (n <= 0 || segment.length === 0) return Array(n).fill([]);
-    const avg = Math.ceil(segment.length / n);
-    const result: typeof enrichedItems[] = [];
-    for (let i = 0; i < segment.length; i += avg) {
-      result.push(segment.slice(i, i + avg));
-    }
-    while (result.length < n) result.push([]);
-    return result;
-  };
-
-  const boxesSegments = [
-    ...splitSegment(segment1, boxes1),
-    ...splitSegment(segment2, boxes2),
-    ...splitSegment(segment3, boxes3)
-  ];
-
-  const itemBoxMap = new Map<number, { boxLength: number, boxWidth: number, boxHeight: number }>();
-  const kitBoxValues: string[] = [];
-
-  for (let i = 0; i < boxesSegments.length; i++) {
-    const seg = boxesSegments[i];
-    const boxLength: number = safeFloat(fixedBoxLength ?? Math.max(...seg.map((it: ShipmentItem) => it.cubedItemLength)));
-    const boxWidth: number = safeFloat(fixedBoxWidth ?? Math.max(...seg.map((it: ShipmentItem) => it.cubedItemWidth)));
-    const boxHeight: number = safeFloat(fixedBoxHeight ?? Math.max(...seg.map((it: ShipmentItem) => it.cubedItemHeight)));
-
-    kitBoxValues.push(`(
-      ${idOrder}, 'Box ${i + 1}', ${numBoxes},
-      ${boxLength}, ${boxWidth}, ${boxHeight},
-      0, 0, '${modelName}', ${numBoxes}
-    )`);
-
-    for (const item of seg) {
-      itemBoxMap.set(item.id, { boxLength, boxWidth, boxHeight });
-    }
-  }
-
-  if (kitBoxValues.length) {
-    await db.request().query(`
-      INSERT INTO TB_KitBoxes (
-        idOrder, boxLabel, boxNumber,
-        boxLength, boxWidth, boxHeight,
-        fromRow, toRow, model, numBoxes
-      ) VALUES ${kitBoxValues.join(',\n')}
-    `);
-  }
-
-  const MAX_BATCH_SIZE = 500;
-  const valuesList: string[] = [];
-
-  for (const item of items) {
-    const dims = itemBoxMap.get(item.id);
-    if (!dims) continue;
-
-    const { boxLength, boxWidth, boxHeight } = dims;
-
-    const currentBoxVolume = item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight;
-    const newBoxVolume = boxLength * boxWidth * boxHeight;
-    const itemVolume = item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight;
-
-      //const currentArea = item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
-      //                    item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth);
-      const currentArea =   2*(item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) )+
-                          2*(item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth));               
-      //const newArea = boxLength * (boxWidth + boxHeight) + boxWidth * (boxWidth + boxHeight);
-      const newArea = 2*(boxLength * (boxWidth + boxHeight) )+ 2*(boxWidth * (boxWidth + boxHeight));
-    const currentCorrugateCost = safeFloat((currentArea / 144) * corrugateCostPerSf);
-    const newCorrugateCost = safeFloat((newArea / 144) * corrugateCostPerSf);
-
-    const currentDimWeight = safeFloat(currentBoxVolume / dimWeightFactor);
-    const newDimWeight = safeFloat(newBoxVolume / dimWeightFactor);
-
-    const currentBillableWeight = Math.max(item.cubedItemWeight, currentDimWeight);
-    const newBillableWeight = Math.max(item.cubedItemWeight, newDimWeight);
-
-    const currentVoidVolume = safeFloat((currentBoxVolume - itemVolume) / 1728);
-    const newVoidVolume = safeFloat((newBoxVolume - itemVolume) / 1728);
-
-    const currentVoidFillCost = safeFloat(currentVoidVolume * packMaterialCost);
-    const newVoidFillCost = safeFloat(newVoidVolume * packMaterialCost);
-
-    valuesList.push(`(
-      ${idOrder}, ${attrData.id}, ${item.id}, '${modelName}', ${numBoxes},
-      ${boxLength}, ${boxWidth}, ${boxHeight},
-      ${currentArea}, ${newArea},
-      ${currentCorrugateCost}, ${newCorrugateCost},
-      ${currentDimWeight}, ${newDimWeight},
-      ${currentBillableWeight}, ${newBillableWeight},
-      ${currentBillableWeight * freightCostPerLb}, ${newBillableWeight * freightCostPerLb},
-      ${currentVoidVolume}, ${newVoidVolume},
-      ${currentVoidFillCost}, ${newVoidFillCost}
-    )`);
-  }
-
-  for (let i = 0; i < valuesList.length; i += MAX_BATCH_SIZE) {
-    const chunk = valuesList.slice(i, i + MAX_BATCH_SIZE);
-    await db.request().query(`
-      INSERT INTO TB_Results (
-        idOrder, idAttributeData, idShipmenDataFile, model, boxNumber,
-        newAssignedBoxLength, newAssignedBoxWidth, newAssignedBoxHeight,
-        currentBoxCorrugateArea, newBoxCorrugateArea,
-        currentBoxCorrugateCost, newBoxCorrugateCost,
-        currentDimWeight, newDimWeight,
-        currentBillableWeight, newBillableWeight,
-        currentFreightCost, newFreightCost,
-        currentVoidVolume, newVoidVolume,
-        currentVoidFillCost, newVoidFillCost
-      ) VALUES ${chunk.join(',\n')}
-    `);
-  }
-}
-
-// export const runTopFrequenciesModel = async (idOrder: number) => {
-//   const db = await connectToSqlServer();
-//   if (!db) throw new Error("No se pudo conectar a la base de datos");
-
-//   const shipmentResult = await db.request()
-//     .input("idOrder", idOrder)
-//     .query(`SELECT * FROM TB_ShipmentDataFile WHERE idOrder = @idOrder`);
-
-//   if (!shipmentResult?.recordset?.length) {
-//     throw new Error("No shipment data found for this order");
-//   }
-
-//   const row = shipmentResult.recordset[0];
-//   const isNormalized =
-//     row.cubedItemLength > 0 &&
-//     row.cubedItemWidth > 0 &&
-//     row.cubedItemHeight > 0 &&
-//     row.cubedItemWeight > 0;
-
-//   const items: ShipmentItem[] = isNormalized
-//     ? shipmentResult.recordset
-//     : shipmentResult.recordset.flatMap(applyAABBHeuristic);
-
-//   if (!items.length) throw new Error("No valid items found for processing");
-
-//   const attrDataResult = await db.request()
-//     .input("idOrder", idOrder)
-//     .query(`SELECT * FROM TB_AttributeData WHERE idOrder = @idOrder`);
-
-//   if (!attrDataResult?.recordset?.length)
-//     throw new Error("No attribute data found for this order");
-
-//   const attrData = attrDataResult.recordset[0];
-//   const runCurrentBoxKitOnly = Number(attrData.runCurrentBoxKitOnly);
-//   const currentBoxUsed = Number(attrData.currentBoxUsed);
-//   const dimWeightFactor = attrData.dimWeightFactor;
-//   const packMaterialCost = attrData.packMaterialCost;
-//   const corrugateCostPerSf = attrData.corrugateCost;
-//   const freightCostPerLb = attrData.freightCostPerLb;
-
-//   const minBoxes = Number(attrData.minimunNumBox);
-//   const maxBoxes = Number(attrData.maximunNumBox);
-
-//   const boxRange = runCurrentBoxKitOnly === 0
-//     ? Array.from({ length: maxBoxes - minBoxes + 1 }, (_, i) => minBoxes + i)
-//     : [];
-
-//   await Promise.all(
-//     boxRange.map(numBoxes =>
-//       executeTopFrequenciesModel(
-//         db,
-//         items,
-//         attrData,
-//         idOrder,
-//         numBoxes,
-//         dimWeightFactor,
-//         packMaterialCost,
-//         corrugateCostPerSf,
-//         freightCostPerLb,
-//         "TopFrequencies"
-//       )
-//     )
-//   );
-
-//   try {
-//     const boxKitResult = await db.request()
-//       .input("idOrder", idOrder)
-//       .query(`
-//         SELECT TOP 1 * FROM TB_BoxKitFile 
-//         WHERE idOrder = @idOrder 
-//         ORDER BY length DESC
-//       `);
-
-//     if (!boxKitResult?.recordset?.length)
-//       throw new Error("No box kit found for this order");
-
-//     const box = boxKitResult.recordset[0];
-
-//     await executeTopFrequenciesModel(
-//       db,
-//       items,
-//       attrData,
-//       idOrder,
-//       currentBoxUsed,
-//       dimWeightFactor,
-//       packMaterialCost,
-//       corrugateCostPerSf,
-//       freightCostPerLb,
-//       "CurrentTopFrequencies",
-//       box.length,
-//       box.width,
-//       box.height
-//     );
-//   } catch (err) {
-//     if (err && typeof err === "object" && "message" in err) {
-//       console.warn(`No se pudo ejecutar CurrentTopFrequencies: ${(err as any).message}`);
-//     } else {
-//       console.warn(`No se pudo ejecutar CurrentTopFrequencies:`, err);
-//     }
-//   }
-
-//   return {
-//     success: true,
-//     message: "TopFrequencies model completed successfully"
-//   };
-// };
-export const runTopFrequenciesModel = async (idOrder: number) => {
-  const db = await connectToSqlServer();
-  if (!db) throw new Error("No se pudo conectar a la base de datos");
-
-  const shipmentResult = await db.request()
-    .input("idOrder", idOrder)
-    .query(`
-      SELECT *
-      FROM TB_ShipmentDataFile
-      WHERE idOrder = @idOrder
-      ORDER BY cubedItemLength DESC
-    `);
-
-  if (!shipmentResult?.recordset?.length) {
-    throw new Error("No shipment data found for this order");
-  }
-
-  const row = shipmentResult.recordset[0];
-  const isNormalized =
-    row.cubedItemLength > 0 &&
-    row.cubedItemWidth  > 0 &&
-    row.cubedItemHeight > 0 &&
-    row.cubedItemWeight > 0;
-
-  const items: ShipmentItem[] = isNormalized
-    ? shipmentResult.recordset
-    : shipmentResult.recordset.flatMap(applyAABBHeuristic);
-
-  if (!items.length) throw new Error("No valid items found for processing");
-
-  const attrDataResult = await db.request()
-    .input("idOrder", idOrder)
-    .query(`SELECT * FROM TB_AttributeData WHERE idOrder = @idOrder`);
-  if (!attrDataResult?.recordset?.length)
-    throw new Error("No attribute data found for this order");
-
-  const attrData = attrDataResult.recordset[0];
-
-  const runCurrentBoxKitOnly = Number(attrData.runCurrentBoxKitOnly);
-  const currentBoxUsed = Number(attrData.currentBoxUsed) || 0;
-
-  const dimWeightFactor    = attrData.dimWeightFactor;
-  const packMaterialCost   = attrData.packMaterialCost;
-  const corrugateCostPerSf = attrData.corrugateCost;
-  const freightCostPerLb   = attrData.freightCostPerLb;
-
-  const minBoxes = Number(attrData.minimunNumBox);
-  const maxBoxes = Number(attrData.maximunNumBox);
-
-  const jobs: Promise<any>[] = [];
-
-  if (runCurrentBoxKitOnly === 0) {
-    const boxRange = Array.from({ length: maxBoxes - minBoxes + 1 }, (_, i) => minBoxes + i);
-
-    for (const numBoxes of boxRange) {
-      jobs.push(
-        executeTopFrequenciesModel(
-          db,
-          items,
-          attrData,
-          idOrder,
-          numBoxes,
-          dimWeightFactor,
-          packMaterialCost,
-          corrugateCostPerSf,
-          freightCostPerLb,
-          "TopFrequencies"
-        )
-      );
-    }
-
-    if (currentBoxUsed > 0) {
-      jobs.push(
-        executeTopFrequenciesModel(
-          db,
-          items,
-          attrData,
-          idOrder,
-          currentBoxUsed,
-          dimWeightFactor,
-          packMaterialCost,
-          corrugateCostPerSf,
-          freightCostPerLb,
-          "CurrentTopFrequencies"
-        )
-      );
-    }
-  } else {
-    if (currentBoxUsed <= 0) {
-      throw new Error("Attribute 'currentBoxUsed' must be > 0 when runCurrentBoxKitOnly = 1");
-    }
-
-    jobs.push(
-      executeTopFrequenciesModel(
-        db,
-        items,
-        attrData,
-        idOrder,
-        currentBoxUsed,
-        dimWeightFactor,
-        packMaterialCost,
-        corrugateCostPerSf,
-        freightCostPerLb,
-        "CurrentTopFrequencies"
-      )
-    );
-  }
-
-  await Promise.all(jobs);
-
-  return {
-    success: true,
-    message: "TopFrequencies model completed successfully (sin BoxKit)."
-  };
-};
-export async function executeTopFrequenciesModel(
-  db: any,
-  items: ShipmentItem[],
-  attrData: any,
-  idOrder: number,
-  numBoxes: number,
-  dimWeightFactor: number,
-  packMaterialCost: number,
-  corrugateCostPerSf: number,
-  freightCostPerLb: number,
-  modelName: string,
-  fixedBoxLength?: number,
-  fixedBoxWidth?: number,
-  fixedBoxHeight?: number
-) {
-  const enrichedItems = items.map(item => ({
-    ...item,
-    volume: item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight
-  })).sort((a, b) => b.cubedItemLength - a.cubedItemLength);
-
-  const lengthCounts: Record<number, number> = {};
-  for (const item of enrichedItems) {
-    lengthCounts[item.cubedItemLength] = (lengthCounts[item.cubedItemLength] || 0) + 1;
-  }
-
-  const sortedFrequencies = Object.entries(lengthCounts)
-    .map(([length, freq]) => ({ length: parseFloat(length), freq }))
-    .sort((a, b) => b.freq - a.freq || b.length - a.length);
-
-  const topLengths = sortedFrequencies
-    .slice(0, numBoxes - 1)
-    .map(entry => entry.length)
-    .sort((a, b) => b - a);
-
-  const cutPoints: number[] = [];
-  for (const length of topLengths) {
-    const index = enrichedItems.findIndex(item => item.cubedItemLength === length);
-    if (index !== -1) cutPoints.push(index);
-  }
-  cutPoints.push(enrichedItems.length);
-
-  const segments: ShipmentItem[][] = [];
-  let start = 0;
-  for (const end of cutPoints) {
-    segments.push(enrichedItems.slice(start, end));
-    start = end;
-  }
-
-  const kitBoxValues: string[] = [];
-  const resultsValues: string[] = [];
-
-  for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i];
-    if (!segment.length) continue;
-
-    const boxLength = fixedBoxLength ?? Math.max(...segment.map(it => it.cubedItemLength));
-    const boxWidth = fixedBoxWidth ?? Math.max(...segment.map(it => it.cubedItemWidth));
-    const boxHeight = fixedBoxHeight ?? Math.max(...segment.map(it => it.cubedItemHeight));
-
-    const fromRow = items.indexOf(segment[0]) + 1;
-    const toRow = items.indexOf(segment[segment.length - 1]) + 1;
-
-    kitBoxValues.push(`(
-      ${idOrder}, 'Box ${i + 1}', ${numBoxes},
-      ${boxLength}, ${boxWidth}, ${boxHeight},
-      ${fromRow}, ${toRow}, '${modelName}', ${numBoxes}
-    )`);
-
-    for (const item of segment) {
-      const itemVolume = item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight;
-      const currentBoxVolume = item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight;
-      const newBoxVolume = boxLength * boxWidth * boxHeight;
-
-      //const currentArea = item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
-      //                    item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth);
-      const currentArea =   2*(item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) )+
-                          2*(item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth));               
-      //const newArea = boxLength * (boxWidth + boxHeight) + boxWidth * (boxWidth + boxHeight);
-      const newArea = 2*(boxLength * (boxWidth + boxHeight) )+ 2*(boxWidth * (boxWidth + boxHeight));
-
-      const currentCorrugateCost = (currentArea / 144) * corrugateCostPerSf;
-      const newCorrugateCost = (newArea / 144) * corrugateCostPerSf;
-
-      const currentDimWeight = currentBoxVolume / dimWeightFactor;
-      const newDimWeight = newBoxVolume / dimWeightFactor;
-
-      const currentBillableWeight = Math.max(item.cubedItemWeight, currentDimWeight);
-      const newBillableWeight = Math.max(item.cubedItemWeight, newDimWeight);
-
-      const currentFreightCost = currentBillableWeight * freightCostPerLb;
-      const newFreightCost = newBillableWeight * freightCostPerLb;
-
-      const currentVoidVolume = (currentBoxVolume - itemVolume) / 1728;
-      const newVoidVolume = (newBoxVolume - itemVolume) / 1728;
-
-      const currentVoidFillCost = currentVoidVolume * packMaterialCost;
-      const newVoidFillCost = newVoidVolume * packMaterialCost;
-
-      resultsValues.push(`(
-        ${idOrder}, ${attrData.id}, ${item.id}, '${modelName}', ${numBoxes},
-        ${boxLength}, ${boxWidth}, ${boxHeight},
-        ${currentArea}, ${newArea},
-        ${currentCorrugateCost}, ${newCorrugateCost},
-        ${currentDimWeight}, ${newDimWeight},
-        ${currentBillableWeight}, ${newBillableWeight},
-        ${currentFreightCost}, ${newFreightCost},
-        ${currentVoidVolume}, ${newVoidVolume},
-        ${currentVoidFillCost}, ${newVoidFillCost}
-      )`);
-    }
-  }
-
-  if (kitBoxValues.length) {
-    await db.request().query(`
-      INSERT INTO TB_KitBoxes (
-        idOrder, boxLabel, boxNumber,
-        boxLength, boxWidth, boxHeight,
-        fromRow, toRow, model, numBoxes
-      ) VALUES ${kitBoxValues.join(',\n')}
-    `);
-  }
-
-  const MAX_BATCH_SIZE = 500;
-  for (let i = 0; i < resultsValues.length; i += MAX_BATCH_SIZE) {
-    const chunk = resultsValues.slice(i, i + MAX_BATCH_SIZE);
-    await db.request().query(`
-      INSERT INTO TB_Results (
-        idOrder, idAttributeData, idShipmenDataFile, model, boxNumber,
-        newAssignedBoxLength, newAssignedBoxWidth, newAssignedBoxHeight,
-        currentBoxCorrugateArea, newBoxCorrugateArea,
-        currentBoxCorrugateCost, newBoxCorrugateCost,
-        currentDimWeight, newDimWeight,
-        currentBillableWeight, newBillableWeight,
-        currentFreightCost, newFreightCost,
-        currentVoidVolume, newVoidVolume,
-        currentVoidFillCost, newVoidFillCost
-      ) VALUES ${chunk.join(',\n')}
-    `);
-  }
-}
-
-// export const runEvenDistributionModel = async (idOrder: number) => {
-//   const db = await connectToSqlServer();
-//   if (!db) throw new Error("No se pudo conectar a la base de datos");
-
-//   const shipmentResult = await db.request()
-//     .input("idOrder", idOrder)
-//     .query(`SELECT * FROM TB_ShipmentDataFile WHERE idOrder = @idOrder ORDER BY cubedItemLength DESC`);
-
-//   if (!shipmentResult?.recordset?.length) {
-//     throw new Error("No shipment data found for this order");
-//   }
-
-//   const row = shipmentResult.recordset[0];
-
-//   const isNormalized =
-//     row.cubedItemLength > 0 &&
-//     row.cubedItemWidth > 0 &&
-//     row.cubedItemHeight > 0 &&
-//     row.cubedItemWeight > 0;
-
-//   const items: ShipmentItem[] = isNormalized
-//     ? shipmentResult.recordset
-//     : shipmentResult.recordset.flatMap(applyAABBHeuristic);
-
-//   if (!items.length) throw new Error("No valid items found for processing");
-
-//   const attrDataResult = await db.request()
-//     .input("idOrder", idOrder)
-//     .query(`SELECT * FROM TB_AttributeData WHERE idOrder = @idOrder`);
-
-//   if (!attrDataResult?.recordset?.length) throw new Error("No attribute data found for this order");
-//   const attrData = attrDataResult.recordset[0];
-
-//   const runCurrentBoxKitOnly = Number(attrData.runCurrentBoxKitOnly);
-//   const currentBoxUsed = Number(attrData.currentBoxUsed);
-//   const dimWeightFactor = attrData.dimWeightFactor;
-//   const packMaterialCost = attrData.packMaterialCost;
-//   const corrugateCostPerSf = attrData.corrugateCost;
-//   const freightCostPerLb = attrData.freightCostPerLb;
-
-//   const minBoxes = Number(attrData.minimunNumBox);
-//   const maxBoxes = Number(attrData.maximunNumBox);
-
-//   const boxRange = runCurrentBoxKitOnly === 0
-//     ? Array.from({ length: maxBoxes - minBoxes + 1 }, (_, i) => minBoxes + i)
-//     : [];
-
-//   await Promise.all(
-//     boxRange.map(numBoxes =>
-//       executeDistributionModel(
-//         db,
-//         items,
-//         attrData,
-//         idOrder,
-//         numBoxes,
-//         dimWeightFactor,
-//         packMaterialCost,
-//         corrugateCostPerSf,
-//         freightCostPerLb,
-//         "EvenDistribution"
-//       )
-//     )
-//   );
-
-//   const boxKitResult = await db.request()
-//     .input("idOrder", idOrder)
-//     .query(`SELECT TOP 1 * FROM TB_BoxKitFile WHERE idOrder = @idOrder ORDER BY length DESC`);
-//   if (!boxKitResult?.recordset?.length) throw new Error("No box kit found for this order");
-
-//   const box = boxKitResult.recordset[0];
-
-//   await executeDistributionModel(
-//     db,
-//     items,
-//     attrData,
-//     idOrder,
-//     currentBoxUsed,
-//     dimWeightFactor,
-//     packMaterialCost,
-//     corrugateCostPerSf,
-//     freightCostPerLb,
-//     "CurrentEvenDistribution",
-//     box.length,
-//     box.width,
-//     box.height
-//   );
-
-//   return {
-//     success: true,
-//     message: "Even Distribution model completed successfully"
-//   };
-// };
-
-// export async function executeDistributionModel(
+// async function executeEvenVolume(
 //   db: any,
 //   items: ShipmentItem[],
 //   attrData: any,
@@ -1477,50 +467,624 @@ export async function executeTopFrequenciesModel(
 //   fixedBoxWidth?: number,
 //   fixedBoxHeight?: number
 // ) {
-//   if (!items.length) throw new Error("No items to process for distribution");
+//   if (!items.length) throw new Error("No items to process");
 
-//   const totalRows = items.length;
-//   const realBoundaries: { start: number; end: number }[] = [];
+//   type EnrichedItem = ShipmentItem & {
+//     itemVolume: number;
+//     cumulativeVolume?: number;
+//     cumulativePercentage?: number;
+//   };
 
-//   if (fixedBoxLength !== undefined) {
-//     realBoundaries.push({ start: 0, end: items.length - 1 });
-//   } else {
-//     const targetRowsPerBox = totalRows / numBoxes;
-//     let startIdx = 0;
+//   const enrichedItems: EnrichedItem[] = items.map(item => ({
+//     ...item,
+//     itemVolume: safeFloat(item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight)
+//   })).sort((a, b) => b.cubedItemLength - a.cubedItemLength);
 
-//     for (let i = 0; i < numBoxes; i++) {
-//       let endIdx: number;
+//   const totalVolume = enrichedItems.reduce((sum, item) => sum + item.itemVolume, 0);
 
-//       if (i === numBoxes - 1) {
-//         endIdx = totalRows - 1;
-//       } else {
-//         let targetRowIdx = Math.floor(targetRowsPerBox * (i + 1));
-//         if (targetRowIdx >= totalRows) targetRowIdx = totalRows - 1;
+//   let cumulativeVolume = 0;
+//   enrichedItems.forEach(item => {
+//     cumulativeVolume += item.itemVolume;
+//     item.cumulativeVolume = cumulativeVolume;
+//     item.cumulativePercentage = cumulativeVolume / totalVolume;
+//   });
 
-//         const targetLength = items[targetRowIdx].cubedItemLength;
-//         const firstMatchIdx = items.findIndex(it => it.cubedItemLength === targetLength);
+//   const cutPoints: number[] = [];
+//   const volumeTargets = Array.from({ length: numBoxes - 1 }, (_, i) => (i + 1) / numBoxes);
 
-//         endIdx = Math.max(firstMatchIdx - 1, startIdx);
+//   for (const target of volumeTargets) {
+//     const passedIdx = enrichedItems.findIndex(it => (it.cumulativePercentage ?? 0) >= target);
+//     if (passedIdx === -1) continue;
+//     const anchorLength = enrichedItems[passedIdx].cubedItemLength;
+//     const trueCutIndex = enrichedItems.findIndex(it => it.cubedItemLength === anchorLength);
+//     cutPoints.push(trueCutIndex);
+//   }
+//   cutPoints.push(enrichedItems.length);
+
+//   const segments: ShipmentItem[][] = [];
+//   let start = 0;
+//   for (const end of cutPoints) {
+//     const segment = enrichedItems.slice(start, end);
+//     segments.push(segment);
+//     start = end;
+//   }
+
+//   for (let i = 0; i < segments.length; i++) {
+//     const segItems = segments[i];
+//     const boxLength = safeFloat(fixedBoxLength ?? Math.max(...segItems.map(it => it.cubedItemLength)));
+//     const boxWidth = safeFloat(fixedBoxWidth ?? Math.max(...segItems.map(it => it.cubedItemWidth)));
+//     const boxHeight = safeFloat(fixedBoxHeight ?? Math.max(...segItems.map(it => it.cubedItemHeight)));
+
+//     if (!Number.isFinite(boxLength) || !Number.isFinite(boxWidth) || !Number.isFinite(boxHeight)) {
+//       throw new Error(`Invalid box dimensions: ${boxLength}x${boxWidth}x${boxHeight}`);
+//     }
+
+//     await db.request()
+//       .input("idOrder", idOrder)
+//       .input("boxLabel", `Box ${i + 1}`)
+//       .input("boxNumber", numBoxes)
+//       .input("boxLength", boxLength)
+//       .input("boxWidth", boxWidth)
+//       .input("boxHeight", boxHeight)
+//       .input("fromRow", 0)
+//       .input("toRow", 0)
+//       .input("model", modelName)
+//       .input("numBoxes", numBoxes)
+//       .query(`
+//         INSERT INTO TB_KitBoxes (
+//           idOrder, boxLabel, boxNumber,
+//           boxLength, boxWidth, boxHeight,
+//           fromRow, toRow, model, numBoxes
+//         )
+//         VALUES (
+//           @idOrder, @boxLabel, @boxNumber,
+//           @boxLength, @boxWidth, @boxHeight,
+//           @fromRow, @toRow, @model, @numBoxes
+//         )
+//       `);
+//   }
+
+//   const uniqueItemMap = new Map<number, { boxLength: number; boxWidth: number; boxHeight: number }>();
+//   for (const item of items) {
+//     let foundSegment: ShipmentItem[] | undefined;
+//     for (const seg of segments) {
+//       if (seg.some(s => s.id === item.id)) {
+//         foundSegment = seg;
+//         break;
 //       }
+//     }
+//     if (!foundSegment) continue;
 
-//       realBoundaries.push({ start: startIdx, end: endIdx });
-//       startIdx = endIdx + 1;
+//     const boxLength = safeFloat(fixedBoxLength ?? Math.max(...foundSegment.map(it => it.cubedItemLength)));
+//     const boxWidth = safeFloat(fixedBoxWidth ?? Math.max(...foundSegment.map(it => it.cubedItemWidth)));
+//     const boxHeight = safeFloat(fixedBoxHeight ?? Math.max(...foundSegment.map(it => it.cubedItemHeight)));
+
+//     uniqueItemMap.set(item.id, { boxLength, boxWidth, boxHeight });
+//   }
+
+//   const MAX_BATCH_SIZE = 500;
+//   const valuesList: string[] = [];
+
+//   for (const item of items) {
+//     const boxDims = uniqueItemMap.get(item.id);
+//     if (!boxDims) continue;
+
+//     const { boxLength, boxWidth, boxHeight } = boxDims;
+
+//     const currentArea = safeFloat(
+//       2 * item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
+//       2 * item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth)
+//     );
+//     const newArea = safeFloat(
+//       2 * boxLength * (boxWidth + boxHeight) +
+//       2 * boxWidth * (boxWidth + boxHeight)
+//     );
+
+//     const currentCorrugateCost = safeFloat((currentArea / 144) * corrugateCostPerSf);
+//     const newCorrugateCost = safeFloat((newArea / 144) * corrugateCostPerSf);
+
+//     const currentDimWeight = safeFloat((item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight) / dimWeightFactor);
+//     const newDimWeight = safeFloat((boxLength * boxWidth * boxHeight) / dimWeightFactor);
+
+//     const currentBillableWeight = safeFloat(Math.max(item.cubedItemWeight, currentDimWeight));
+//     const newBillableWeight = safeFloat(Math.max(item.cubedItemWeight, newDimWeight));
+
+//     const currentVoidVolume = safeFloat((item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight
+//       - item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight) / 1728);
+//     const newVoidVolume = safeFloat((boxLength * boxWidth * boxHeight
+//       - item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight) / 1728);
+//           const currentFreightCost = currentBillableWeight * freightCostPerLb;
+//       const newFreightCost = newBillableWeight * freightCostPerLb;
+
+//     const currentVoidFillCost = safeFloat(currentVoidVolume * packMaterialCost);
+//     const newVoidFillCost = safeFloat(newVoidVolume * packMaterialCost);
+
+//     valuesList.push(`(
+//       ${idOrder}, ${attrData.id}, ${item.id}, '${modelName}', ${numBoxes},
+//       ${boxLength}, ${boxWidth}, ${boxHeight},
+//       ${currentArea}, ${newArea},
+//       ${currentCorrugateCost}, ${newCorrugateCost},
+//       ${currentDimWeight}, ${newDimWeight},
+//       ${currentBillableWeight}, ${newBillableWeight},
+//       ${currentFreightCost}, ${newFreightCost},
+//       ${currentVoidVolume}, ${newVoidVolume},
+//       ${currentVoidFillCost}, ${newVoidFillCost}
+//     )`);
+//   }
+
+//   for (let i = 0; i < valuesList.length; i += MAX_BATCH_SIZE) {
+//     const chunk = valuesList.slice(i, i + MAX_BATCH_SIZE);
+//     const sql = `
+//       INSERT INTO TB_Results (
+//         idOrder, idAttributeData, idShipmenDataFile, model, boxNumber,
+//         newAssignedBoxLength, newAssignedBoxWidth, newAssignedBoxHeight,
+//         currentBoxCorrugateArea, newBoxCorrugateArea,
+//         currentBoxCorrugateCost, newBoxCorrugateCost,
+//         currentDimWeight, newDimWeight,
+//         currentBillableWeight, newBillableWeight,
+//         currentFreightCost, newFreightCost,
+//         currentVoidVolume, newVoidVolume,
+//         currentVoidFillCost, newVoidFillCost
+//       )
+//       VALUES
+//       ${chunk.join(',\n')}
+//     `;
+//     await db.request().query(sql);
+//   }
+// }
+
+function safeFloat(value: any, decimals = 2): number {
+  const num = parseFloat(value);
+  if (isNaN(num) || !isFinite(num)) return 0;
+  return parseFloat(num.toFixed(decimals));
+}
+
+// export const runEvenVolumeDinamicoModel = async (idOrder: number) => {
+//   const db = await connectToSqlServer();
+//   if (!db) throw new Error("No se pudo conectar a la base de datos");
+
+//   const itemsResult = await db.request()
+//     .input("idOrder", idOrder)
+//     .query(`
+//       SELECT *
+//       FROM TB_ShipmentDataFile
+//       WHERE idOrder = @idOrder
+//       ORDER BY cubedItemLength DESC
+//     `);
+//   if (!itemsResult?.recordset?.length) {
+//     throw new Error("No shipment data found for this order");
+//   }
+
+//   const row = itemsResult.recordset[0];
+//   const isNormalized =
+//     row.cubedItemLength > 0 &&
+//     row.cubedItemWidth  > 0 &&
+//     row.cubedItemHeight > 0 &&
+//     row.cubedItemWeight > 0;
+
+//   const items: ShipmentItem[] = isNormalized
+//     ? itemsResult.recordset
+//     : itemsResult.recordset.flatMap(applyAABBHeuristic);
+
+//   if (!items.length) throw new Error("No valid items found for processing");
+
+//   const attrDataResult = await db.request()
+//     .input("idOrder", idOrder)
+//     .query(`SELECT * FROM TB_AttributeData WHERE idOrder = @idOrder`);
+//   if (!attrDataResult?.recordset?.length) {
+//     throw new Error("No attribute data found for this order");
+//   }
+//   const attrData = attrDataResult.recordset[0];
+
+//   const runCurrentBoxKitOnly = Number(attrData.runCurrentBoxKitOnly);
+//   const currentBoxUsed       = Number(attrData.currentBoxUsed) || 0;
+
+//   const dimWeightFactor     = attrData.dimWeightFactor;
+//   const packMaterialCost    = attrData.packMaterialCost;
+//   const corrugateCostPerSf  = attrData.corrugateCost;
+//   const freightCostPerLb    = attrData.freightCostPerLb;
+
+//   const minBoxes = Number(attrData.minimunNumBox);
+//   const maxBoxes = Number(attrData.maximunNumBox);
+
+//   const jobs: Promise<any>[] = [];
+
+//   if (runCurrentBoxKitOnly === 0) {
+//     const numBoxesArray = Array.from(
+//       { length: maxBoxes - minBoxes + 1 },
+//       (_, i) => minBoxes + i
+//     );
+
+//     for (const numBoxes of numBoxesArray) {
+//       jobs.push(
+//         executeEvenVolumeDinamico(
+//           db,
+//           items,
+//           attrData,
+//           idOrder,
+//           numBoxes,
+//           dimWeightFactor,
+//           packMaterialCost,
+//           corrugateCostPerSf,
+//           freightCostPerLb,
+//           "EvenVolumeDynamic"
+//         )
+//       );
+//     }
+
+//     if (currentBoxUsed > 0) {
+//       jobs.push(
+//         executeEvenVolumeDinamico(
+//           db,
+//           items,
+//           attrData,
+//           idOrder,
+//           currentBoxUsed,
+//           dimWeightFactor,
+//           packMaterialCost,
+//           corrugateCostPerSf,
+//           freightCostPerLb,
+//           "CurrentEvenVolumeDynamic"
+//         )
+//       );
+//     }
+//   } else {
+//     // 3c) Modo "solo current"
+//     if (currentBoxUsed <= 0) {
+//       throw new Error("Attribute 'currentBoxUsed' must be > 0 when runCurrentBoxKitOnly = 1");
+//     }
+
+//     jobs.push(
+//       executeEvenVolumeDinamico(
+//         db,
+//         items,
+//         attrData,
+//         idOrder,
+//         currentBoxUsed,
+//         dimWeightFactor,
+//         packMaterialCost,
+//         corrugateCostPerSf,
+//         freightCostPerLb,
+//         "CurrentEvenVolumeDynamic"
+//       )
+//     );
+//   }
+
+//   await Promise.all(jobs);
+
+//   return {
+//     success: true,
+//     message: "RunEvenVolumeDynamic model completed successfully (sin BoxKit)."
+//   };
+// };
+// export async function executeEvenVolumeDinamico(
+//   db: any,
+//   items: ShipmentItem[],
+//   attrData: any,
+//   idOrder: number,
+//   numBoxes: number,
+//   dimWeightFactor: number,
+//   packMaterialCost: number,
+//   corrugateCostPerSf: number,
+//   freightCostPerLb: number,
+//   modelName: string,
+//   fixedBoxLength?: number,
+//   fixedBoxWidth?: number,
+//   fixedBoxHeight?: number
+// ) {
+//   if (!items.length) throw new Error("No items to process");
+
+//   const enrichedItems = items.map(item => ({
+//     ...item,
+//     itemVolume: item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight
+//   })).sort((a, b) => b.cubedItemLength - a.cubedItemLength);
+
+//   const totalVolume = enrichedItems.reduce((sum, item) => sum + item.itemVolume, 0);
+//   let cumulativeVolume = 0;
+//   enrichedItems.forEach(item => {
+//     cumulativeVolume += item.itemVolume;
+//     (item as any).cumVolume = cumulativeVolume;
+//     (item as any).cumVolumePct = cumulativeVolume / totalVolume;
+//   });
+
+//   const boxes1 = Math.round(numBoxes * 0.3);
+//   const boxes2 = Math.round(numBoxes * 0.4);
+//   const boxes3 = numBoxes - boxes1 - boxes2;
+
+//   const cut1Idx = enrichedItems.findIndex(i => (i as any).cumVolumePct >= boxes1 / numBoxes);
+//   const cut2Idx = enrichedItems.findIndex(i => (i as any).cumVolumePct >= (boxes1 + boxes2) / numBoxes);
+
+//   const segment1 = enrichedItems.slice(0, cut1Idx);
+//   const segment2 = enrichedItems.slice(cut1Idx, cut2Idx);
+//   const segment3 = enrichedItems.slice(cut2Idx);
+
+//   const splitSegment = (segment: typeof enrichedItems, n: number) => {
+//     if (n <= 0 || segment.length === 0) return Array(n).fill([]);
+//     const avg = Math.ceil(segment.length / n);
+//     const result: typeof enrichedItems[] = [];
+//     for (let i = 0; i < segment.length; i += avg) {
+//       result.push(segment.slice(i, i + avg));
+//     }
+//     while (result.length < n) result.push([]);
+//     return result;
+//   };
+
+//   const boxesSegments = [
+//     ...splitSegment(segment1, boxes1),
+//     ...splitSegment(segment2, boxes2),
+//     ...splitSegment(segment3, boxes3)
+//   ];
+
+//   const itemBoxMap = new Map<number, { boxLength: number, boxWidth: number, boxHeight: number }>();
+//   const kitBoxValues: string[] = [];
+
+//   for (let i = 0; i < boxesSegments.length; i++) {
+//     const seg = boxesSegments[i];
+//     const boxLength: number = safeFloat(fixedBoxLength ?? Math.max(...seg.map((it: ShipmentItem) => it.cubedItemLength)));
+//     const boxWidth: number = safeFloat(fixedBoxWidth ?? Math.max(...seg.map((it: ShipmentItem) => it.cubedItemWidth)));
+//     const boxHeight: number = safeFloat(fixedBoxHeight ?? Math.max(...seg.map((it: ShipmentItem) => it.cubedItemHeight)));
+
+//     kitBoxValues.push(`(
+//       ${idOrder}, 'Box ${i + 1}', ${numBoxes},
+//       ${boxLength}, ${boxWidth}, ${boxHeight},
+//       0, 0, '${modelName}', ${numBoxes}
+//     )`);
+
+//     for (const item of seg) {
+//       itemBoxMap.set(item.id, { boxLength, boxWidth, boxHeight });
 //     }
 //   }
 
+//   if (kitBoxValues.length) {
+//     await db.request().query(`
+//       INSERT INTO TB_KitBoxes (
+//         idOrder, boxLabel, boxNumber,
+//         boxLength, boxWidth, boxHeight,
+//         fromRow, toRow, model, numBoxes
+//       ) VALUES ${kitBoxValues.join(',\n')}
+//     `);
+//   }
+
+//   const MAX_BATCH_SIZE = 500;
+//   const valuesList: string[] = [];
+
+//   for (const item of items) {
+//     const dims = itemBoxMap.get(item.id);
+//     if (!dims) continue;
+
+//     const { boxLength, boxWidth, boxHeight } = dims;
+
+//     const currentBoxVolume = item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight;
+//     const newBoxVolume = boxLength * boxWidth * boxHeight;
+//     const itemVolume = item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight;
+
+//       //const currentArea = item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
+//       //                    item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth);
+//       const currentArea =   2*(item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) )+
+//                           2*(item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth));               
+//       //const newArea = boxLength * (boxWidth + boxHeight) + boxWidth * (boxWidth + boxHeight);
+//       const newArea = 2*(boxLength * (boxWidth + boxHeight) )+ 2*(boxWidth * (boxWidth + boxHeight));
+//     const currentCorrugateCost = safeFloat((currentArea / 144) * corrugateCostPerSf);
+//     const newCorrugateCost = safeFloat((newArea / 144) * corrugateCostPerSf);
+
+//     const currentDimWeight = safeFloat(currentBoxVolume / dimWeightFactor);
+//     const newDimWeight = safeFloat(newBoxVolume / dimWeightFactor);
+
+//     const currentBillableWeight = Math.max(item.cubedItemWeight, currentDimWeight);
+//     const newBillableWeight = Math.max(item.cubedItemWeight, newDimWeight);
+
+//     const currentVoidVolume = safeFloat((currentBoxVolume - itemVolume) / 1728);
+//     const newVoidVolume = safeFloat((newBoxVolume - itemVolume) / 1728);
+
+//     const currentVoidFillCost = safeFloat(currentVoidVolume * packMaterialCost);
+//     const newVoidFillCost = safeFloat(newVoidVolume * packMaterialCost);
+
+//     valuesList.push(`(
+//       ${idOrder}, ${attrData.id}, ${item.id}, '${modelName}', ${numBoxes},
+//       ${boxLength}, ${boxWidth}, ${boxHeight},
+//       ${currentArea}, ${newArea},
+//       ${currentCorrugateCost}, ${newCorrugateCost},
+//       ${currentDimWeight}, ${newDimWeight},
+//       ${currentBillableWeight}, ${newBillableWeight},
+//       ${currentBillableWeight * freightCostPerLb}, ${newBillableWeight * freightCostPerLb},
+//       ${currentVoidVolume}, ${newVoidVolume},
+//       ${currentVoidFillCost}, ${newVoidFillCost}
+//     )`);
+//   }
+
+//   for (let i = 0; i < valuesList.length; i += MAX_BATCH_SIZE) {
+//     const chunk = valuesList.slice(i, i + MAX_BATCH_SIZE);
+//     await db.request().query(`
+//       INSERT INTO TB_Results (
+//         idOrder, idAttributeData, idShipmenDataFile, model, boxNumber,
+//         newAssignedBoxLength, newAssignedBoxWidth, newAssignedBoxHeight,
+//         currentBoxCorrugateArea, newBoxCorrugateArea,
+//         currentBoxCorrugateCost, newBoxCorrugateCost,
+//         currentDimWeight, newDimWeight,
+//         currentBillableWeight, newBillableWeight,
+//         currentFreightCost, newFreightCost,
+//         currentVoidVolume, newVoidVolume,
+//         currentVoidFillCost, newVoidFillCost
+//       ) VALUES ${chunk.join(',\n')}
+//     `);
+//   }
+// }
+// export const runTopFrequenciesModel = async (idOrder: number) => {
+//   const db = await connectToSqlServer();
+//   if (!db) throw new Error("No se pudo conectar a la base de datos");
+
+//   const shipmentResult = await db.request()
+//     .input("idOrder", idOrder)
+//     .query(`
+//       SELECT *
+//       FROM TB_ShipmentDataFile
+//       WHERE idOrder = @idOrder
+//       ORDER BY cubedItemLength DESC
+//     `);
+
+//   if (!shipmentResult?.recordset?.length) {
+//     throw new Error("No shipment data found for this order");
+//   }
+
+//   const row = shipmentResult.recordset[0];
+//   const isNormalized =
+//     row.cubedItemLength > 0 &&
+//     row.cubedItemWidth  > 0 &&
+//     row.cubedItemHeight > 0 &&
+//     row.cubedItemWeight > 0;
+
+//   const items: ShipmentItem[] = isNormalized
+//     ? shipmentResult.recordset
+//     : shipmentResult.recordset.flatMap(applyAABBHeuristic);
+
+//   if (!items.length) throw new Error("No valid items found for processing");
+
+//   const attrDataResult = await db.request()
+//     .input("idOrder", idOrder)
+//     .query(`SELECT * FROM TB_AttributeData WHERE idOrder = @idOrder`);
+//   if (!attrDataResult?.recordset?.length)
+//     throw new Error("No attribute data found for this order");
+
+//   const attrData = attrDataResult.recordset[0];
+
+//   const runCurrentBoxKitOnly = Number(attrData.runCurrentBoxKitOnly);
+//   const currentBoxUsed = Number(attrData.currentBoxUsed) || 0;
+
+//   const dimWeightFactor    = attrData.dimWeightFactor;
+//   const packMaterialCost   = attrData.packMaterialCost;
+//   const corrugateCostPerSf = attrData.corrugateCost;
+//   const freightCostPerLb   = attrData.freightCostPerLb;
+
+//   const minBoxes = Number(attrData.minimunNumBox);
+//   const maxBoxes = Number(attrData.maximunNumBox);
+
+//   const jobs: Promise<any>[] = [];
+
+//   if (runCurrentBoxKitOnly === 0) {
+//     const boxRange = Array.from({ length: maxBoxes - minBoxes + 1 }, (_, i) => minBoxes + i);
+
+//     for (const numBoxes of boxRange) {
+//       jobs.push(
+//         executeTopFrequenciesModel(
+//           db,
+//           items,
+//           attrData,
+//           idOrder,
+//           numBoxes,
+//           dimWeightFactor,
+//           packMaterialCost,
+//           corrugateCostPerSf,
+//           freightCostPerLb,
+//           "TopFrequencies"
+//         )
+//       );
+//     }
+
+//     if (currentBoxUsed > 0) {
+//       jobs.push(
+//         executeTopFrequenciesModel(
+//           db,
+//           items,
+//           attrData,
+//           idOrder,
+//           currentBoxUsed,
+//           dimWeightFactor,
+//           packMaterialCost,
+//           corrugateCostPerSf,
+//           freightCostPerLb,
+//           "CurrentTopFrequencies"
+//         )
+//       );
+//     }
+//   } else {
+//     if (currentBoxUsed <= 0) {
+//       throw new Error("Attribute 'currentBoxUsed' must be > 0 when runCurrentBoxKitOnly = 1");
+//     }
+
+//     jobs.push(
+//       executeTopFrequenciesModel(
+//         db,
+//         items,
+//         attrData,
+//         idOrder,
+//         currentBoxUsed,
+//         dimWeightFactor,
+//         packMaterialCost,
+//         corrugateCostPerSf,
+//         freightCostPerLb,
+//         "CurrentTopFrequencies"
+//       )
+//     );
+//   }
+
+//   await Promise.all(jobs);
+
+//   return {
+//     success: true,
+//     message: "TopFrequencies model completed successfully (sin BoxKit)."
+//   };
+// };
+// export async function executeTopFrequenciesModel(
+//   db: any,
+//   items: ShipmentItem[],
+//   attrData: any,
+//   idOrder: number,
+//   numBoxes: number,
+//   dimWeightFactor: number,
+//   packMaterialCost: number,
+//   corrugateCostPerSf: number,
+//   freightCostPerLb: number,
+//   modelName: string,
+//   fixedBoxLength?: number,
+//   fixedBoxWidth?: number,
+//   fixedBoxHeight?: number
+// ) {
+//   const enrichedItems = items.map(item => ({
+//     ...item,
+//     volume: item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight
+//   })).sort((a, b) => b.cubedItemLength - a.cubedItemLength);
+
+//   const lengthCounts: Record<number, number> = {};
+//   for (const item of enrichedItems) {
+//     lengthCounts[item.cubedItemLength] = (lengthCounts[item.cubedItemLength] || 0) + 1;
+//   }
+
+//   const sortedFrequencies = Object.entries(lengthCounts)
+//     .map(([length, freq]) => ({ length: parseFloat(length), freq }))
+//     .sort((a, b) => b.freq - a.freq || b.length - a.length);
+
+//   const topLengths = sortedFrequencies
+//     .slice(0, numBoxes - 1)
+//     .map(entry => entry.length)
+//     .sort((a, b) => b - a);
+
+//   const cutPoints: number[] = [];
+//   for (const length of topLengths) {
+//     const index = enrichedItems.findIndex(item => item.cubedItemLength === length);
+//     if (index !== -1) cutPoints.push(index);
+//   }
+//   cutPoints.push(enrichedItems.length);
+
+//   const segments: ShipmentItem[][] = [];
+//   let start = 0;
+//   for (const end of cutPoints) {
+//     segments.push(enrichedItems.slice(start, end));
+//     start = end;
+//   }
+
 //   const kitBoxValues: string[] = [];
-//   const resultValues: string[] = [];
+//   const resultsValues: string[] = [];
 
-//   for (let i = 0; i < numBoxes; i++) {
-//     const b = realBoundaries[i] || realBoundaries[realBoundaries.length - 1];
-//     const segmentItems = items.slice(b.start, b.end + 1);
+//   for (let i = 0; i < segments.length; i++) {
+//     const segment = segments[i];
+//     if (!segment.length) continue;
 
-//     const fromRow = segmentItems.length > 0 ? b.start + 1 : 0;
-//     const toRow = segmentItems.length > 0 ? b.end + 1 : 0;
+//     const boxLength = fixedBoxLength ?? Math.max(...segment.map(it => it.cubedItemLength));
+//     const boxWidth = fixedBoxWidth ?? Math.max(...segment.map(it => it.cubedItemWidth));
+//     const boxHeight = fixedBoxHeight ?? Math.max(...segment.map(it => it.cubedItemHeight));
 
-//     const boxLength = fixedBoxLength ?? (segmentItems.length > 0 ? Math.max(...segmentItems.map(it => it.cubedItemLength)) : 1);
-//     const boxWidth = fixedBoxWidth ?? (segmentItems.length > 0 ? Math.max(...segmentItems.map(it => it.cubedItemWidth)) : 1);
-//     const boxHeight = fixedBoxHeight ?? (segmentItems.length > 0 ? Math.max(...segmentItems.map(it => it.cubedItemHeight)) : 1);
+//     const fromRow = items.indexOf(segment[0]) + 1;
+//     const toRow = items.indexOf(segment[segment.length - 1]) + 1;
 
 //     kitBoxValues.push(`(
 //       ${idOrder}, 'Box ${i + 1}', ${numBoxes},
@@ -1528,7 +1092,7 @@ export async function executeTopFrequenciesModel(
 //       ${fromRow}, ${toRow}, '${modelName}', ${numBoxes}
 //     )`);
 
-//     for (const item of segmentItems) {
+//     for (const item of segment) {
 //       const itemVolume = item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight;
 //       const currentBoxVolume = item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight;
 //       const newBoxVolume = boxLength * boxWidth * boxHeight;
@@ -1558,7 +1122,7 @@ export async function executeTopFrequenciesModel(
 //       const currentVoidFillCost = currentVoidVolume * packMaterialCost;
 //       const newVoidFillCost = newVoidVolume * packMaterialCost;
 
-//       resultValues.push(`(
+//       resultsValues.push(`(
 //         ${idOrder}, ${attrData.id}, ${item.id}, '${modelName}', ${numBoxes},
 //         ${boxLength}, ${boxWidth}, ${boxHeight},
 //         ${currentArea}, ${newArea},
@@ -1583,8 +1147,8 @@ export async function executeTopFrequenciesModel(
 //   }
 
 //   const MAX_BATCH_SIZE = 500;
-//   for (let i = 0; i < resultValues.length; i += MAX_BATCH_SIZE) {
-//     const chunk = resultValues.slice(i, i + MAX_BATCH_SIZE);
+//   for (let i = 0; i < resultsValues.length; i += MAX_BATCH_SIZE) {
+//     const chunk = resultsValues.slice(i, i + MAX_BATCH_SIZE);
 //     await db.request().query(`
 //       INSERT INTO TB_Results (
 //         idOrder, idAttributeData, idShipmenDataFile, model, boxNumber,
@@ -1600,6 +1164,125 @@ export async function executeTopFrequenciesModel(
 //     `);
 //   }
 // }
+
+// export const runEvenDistributionModel = async (idOrder: number) => {
+//   const db = await connectToSqlServer();
+//   if (!db) throw new Error("No se pudo conectar a la base de datos");
+
+//   const shipmentResult = await db.request()
+//     .input("idOrder", idOrder)
+//     .query(`
+//       SELECT *
+//       FROM TB_ShipmentDataFile
+//       WHERE idOrder = @idOrder
+//       ORDER BY cubedItemLength DESC
+//     `);
+
+//   if (!shipmentResult?.recordset?.length) {
+//     throw new Error("No shipment data found for this order");
+//   }
+
+//   const row = shipmentResult.recordset[0];
+
+//   const isNormalized =
+//     row.cubedItemLength > 0 &&
+//     row.cubedItemWidth > 0 &&
+//     row.cubedItemHeight > 0 &&
+//     row.cubedItemWeight > 0;
+
+//   const items: ShipmentItem[] = isNormalized
+//     ? shipmentResult.recordset
+//     : shipmentResult.recordset.flatMap(applyAABBHeuristic);
+
+//   if (!items.length) throw new Error("No valid items found for processing");
+
+//   const attrDataResult = await db.request()
+//     .input("idOrder", idOrder)
+//     .query(`SELECT * FROM TB_AttributeData WHERE idOrder = @idOrder`);
+
+//   if (!attrDataResult?.recordset?.length) {
+//     throw new Error("No attribute data found for this order");
+//   }
+
+//   const attrData = attrDataResult.recordset[0];
+
+//   const runCurrentBoxKitOnly = Number(attrData.runCurrentBoxKitOnly);
+//   const currentBoxUsed = Number(attrData.currentBoxUsed) || 0;
+
+//   const dimWeightFactor   = attrData.dimWeightFactor;
+//   const packMaterialCost  = attrData.packMaterialCost;
+//   const corrugateCostPerSf= attrData.corrugateCost;
+//   const freightCostPerLb  = attrData.freightCostPerLb;
+
+//   const minBoxes = Number(attrData.minimunNumBox);
+//   const maxBoxes = Number(attrData.maximunNumBox);
+
+//   const jobs: Promise<any>[] = [];
+
+//   if (runCurrentBoxKitOnly === 0) {
+//     const boxRange = Array.from({ length: maxBoxes - minBoxes + 1 }, (_, i) => minBoxes + i);
+
+//     for (const numBoxes of boxRange) {
+//       jobs.push(
+//         executeDistributionModel(
+//           db,
+//           items,
+//           attrData,
+//           idOrder,
+//           numBoxes,
+//           dimWeightFactor,
+//           packMaterialCost,
+//           corrugateCostPerSf,
+//           freightCostPerLb,
+//           "EvenDistribution"
+//         )
+//       );
+//     }
+
+//     if (currentBoxUsed > 0) {
+//       jobs.push(
+//         executeDistributionModel(
+//           db,
+//           items,
+//           attrData,
+//           idOrder,
+//           currentBoxUsed,
+//           dimWeightFactor,
+//           packMaterialCost,
+//           corrugateCostPerSf,
+//           freightCostPerLb,
+//           "CurrentEvenDistribution"
+//         )
+//       );
+//     }
+//   } else {
+//     if (currentBoxUsed <= 0) {
+//       throw new Error("Attribute 'currentBoxUsed' must be > 0 when runCurrentBoxKitOnly = 1");
+//     }
+
+//     jobs.push(
+//       executeDistributionModel(
+//         db,
+//         items,
+//         attrData,
+//         idOrder,
+//         currentBoxUsed,
+//         dimWeightFactor,
+//         packMaterialCost,
+//         corrugateCostPerSf,
+//         freightCostPerLb,
+//         "CurrentEvenDistribution"
+//       )
+//     );
+//   }
+
+//   await Promise.all(jobs);
+
+//   return {
+//     success: true,
+//     message: "Even Distribution model completed successfully (sin BoxKit)."
+//   };
+// };
 
 // export async function executeDistributionModel(
 //   db: any,
@@ -1737,6 +1420,168 @@ export async function executeTopFrequenciesModel(
 //     `);
 //   }
 // }
+// export const runEvenVolumeModel = async (idOrder: number) => {
+//   const db = await connectToSqlServer();
+//   if (!db) throw new Error("No se pudo conectar a la base de datos");
+
+//   const shipmentResult = await db.request()
+//     .input("idOrder", idOrder)
+//     .query(`
+//       SELECT *
+//       FROM TB_ShipmentDataFile
+//       WHERE idOrder = @idOrder
+//       ORDER BY cubedItemLength DESC
+//     `);
+
+//   if (!shipmentResult?.recordset?.length) {
+//     throw new Error("No shipment data found for this order");
+//   }
+
+//   const row = shipmentResult.recordset[0];
+//   const isNormalized =
+//     row.cubedItemLength !== null &&
+//     row.cubedItemLength !== undefined;
+
+//   const items: ShipmentItem[] = isNormalized
+//     ? shipmentResult.recordset
+//     : shipmentResult.recordset.flatMap(applyAABBHeuristic);
+
+//   if (!items.length) throw new Error("No valid items found for processing");
+
+//   const attrDataResult = await db.request()
+//     .input("idOrder", idOrder)
+//     .query(`SELECT * FROM TB_AttributeData WHERE idOrder = @idOrder`);
+//   if (!attrDataResult?.recordset?.length) {
+//     throw new Error("No attribute data found for this order");
+//   }
+
+//   const attrData = attrDataResult.recordset[0];
+
+//   const runCurrentBoxKitOnly = Number(attrData.runCurrentBoxKitOnly);
+//   const currentBoxUsed = Number(attrData.currentBoxUsed) || 0;
+
+//   const dimWeightFactor    = attrData.dimWeightFactor;
+//   const packMaterialCost   = attrData.packMaterialCost;
+//   const corrugateCostPerSf = attrData.corrugateCost;
+//   const freightCostPerLb   = attrData.freightCostPerLb;
+
+//   const minBoxes = Number(attrData.minimunNumBox);
+//   const maxBoxes = Number(attrData.maximunNumBox);
+
+//   const jobs: Promise<any>[] = [];
+
+//   if (runCurrentBoxKitOnly === 0) {
+//     const boxRange = Array.from({ length: maxBoxes - minBoxes + 1 }, (_, i) => minBoxes + i);
+
+//     for (const numBoxes of boxRange) {
+//       jobs.push(
+//         executeEvenVolume(
+//           db,
+//           items,
+//           attrData,
+//           idOrder,
+//           numBoxes,
+//           dimWeightFactor,
+//           packMaterialCost,
+//           corrugateCostPerSf,
+//           freightCostPerLb,
+//           "EvenVolume"
+//         )
+//       );
+//     }
+
+//     if (currentBoxUsed > 0) {
+//       jobs.push(
+//         executeEvenVolume(
+//           db,
+//           items,
+//           attrData,
+//           idOrder,
+//           currentBoxUsed,
+//           dimWeightFactor,
+//           packMaterialCost,
+//           corrugateCostPerSf,
+//           freightCostPerLb,
+//           "CurrentEvenVolume"
+//         )
+//       );
+//     }
+//   } else {
+//     if (currentBoxUsed <= 0) {
+//       throw new Error("Attribute 'currentBoxUsed' must be > 0 when runCurrentBoxKitOnly = 1");
+//     }
+
+//     jobs.push(
+//       executeEvenVolume(
+//         db,
+//         items,
+//         attrData,
+//         idOrder,
+//         currentBoxUsed,
+//         dimWeightFactor,
+//         packMaterialCost,
+//         corrugateCostPerSf,
+//         freightCostPerLb,
+//         "CurrentEvenVolume"
+//       )
+//     );
+//   }
+
+//   await Promise.all(jobs);
+
+//   return {
+//     success: true,
+//     message: "RunEvenVolume model completed successfully (sin BoxKit)."
+//   };
+// };
+
+//NUEVO CON BULK INSERT
+
+// === Helpers TVP (tipados para que coincidan con los TVP del SQL) ===
+const D = (p=10, s=2) => sql.Decimal(p, s);
+
+function makeKitBoxTVP() {
+  const tvp = new sql.Table('dbo.EvenDistKitBoxRow');
+  tvp.columns.add('idOrder', sql.Int);
+  tvp.columns.add('boxLabel', sql.NVarChar(50));
+  tvp.columns.add('boxNumber', sql.Int);
+  tvp.columns.add('boxLength', D());
+  tvp.columns.add('boxWidth',  D());
+  tvp.columns.add('boxHeight', D());
+  tvp.columns.add('fromRow', sql.Int);
+  tvp.columns.add('toRow',   sql.Int);
+  tvp.columns.add('model',   sql.NVarChar(50));
+  tvp.columns.add('numBoxes', sql.Int);
+  return tvp;
+}
+
+function makeResultTVP() {
+  const tvp = new sql.Table('dbo.EvenDistResultRow');
+  tvp.columns.add('idOrder', sql.Int);
+  tvp.columns.add('idAttributeData', sql.Int);
+  tvp.columns.add('idShipmenDataFile', sql.Int);
+  tvp.columns.add('model', sql.NVarChar(50));
+  tvp.columns.add('boxNumber', sql.Int);
+  tvp.columns.add('newAssignedBoxLength', D());
+  tvp.columns.add('newAssignedBoxWidth',  D());
+  tvp.columns.add('newAssignedBoxHeight', D());
+  tvp.columns.add('currentBoxCorrugateArea', D());
+  tvp.columns.add('newBoxCorrugateArea',     D());
+  tvp.columns.add('currentBoxCorrugateCost', D());
+  tvp.columns.add('newBoxCorrugateCost',     D());
+  tvp.columns.add('currentDimWeight', D());
+  tvp.columns.add('newDimWeight',     D());
+  tvp.columns.add('currentBillableWeight', D());
+  tvp.columns.add('newBillableWeight',     D());
+  tvp.columns.add('currentFreightCost', D());
+  tvp.columns.add('newFreightCost',     D());
+  tvp.columns.add('currentVoidVolume', sql.Decimal(18,4));
+  tvp.columns.add('newVoidVolume',     sql.Decimal(18,4));
+  tvp.columns.add('currentVoidFillCost', sql.Decimal(18,4));
+  tvp.columns.add('newVoidFillCost',     sql.Decimal(18,4));
+  return tvp;
+}
+
 export const runEvenDistributionModel = async (idOrder: number) => {
   const db = await connectToSqlServer();
   if (!db) throw new Error("No se pudo conectar a la base de datos");
@@ -1902,8 +1747,8 @@ export async function executeDistributionModel(
     }
   }
 
-  const kitBoxValues: string[] = [];
-  const resultValues: string[] = [];
+  const kitBoxTvp = makeKitBoxTVP();
+  const resultTvp = makeResultTVP();
 
   for (let i = 0; i < realBoundaries.length; i++) {
     const b = realBoundaries[i];
@@ -1916,11 +1761,11 @@ export async function executeDistributionModel(
     const boxWidth  = fixedBoxWidth  ?? (segmentItems.length > 0 ? Math.max(...segmentItems.map(it => it.cubedItemWidth )) : 1);
     const boxHeight = fixedBoxHeight ?? (segmentItems.length > 0 ? Math.max(...segmentItems.map(it => it.cubedItemHeight)) : 1);
 
-    kitBoxValues.push(`(
-      ${idOrder}, 'Box ${i + 1}', ${numBoxes},
-      ${boxLength}, ${boxWidth}, ${boxHeight},
-      ${fromRow}, ${toRow}, '${modelName}', ${numBoxes}
-    )`);
+    kitBoxTvp.rows.add(
+      idOrder, `Box ${i + 1}`, numBoxes,
+      boxLength, boxWidth, boxHeight,
+      fromRow, toRow, modelName, numBoxes
+    );
 
     for (const item of segmentItems) {
       const itemVolume = item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight;
@@ -1950,135 +1795,27 @@ export async function executeDistributionModel(
       const currentVoidFillCost = currentVoidVolume * packMaterialCost;
       const newVoidFillCost     = newVoidVolume * packMaterialCost;
 
-      resultValues.push(`(
-        ${idOrder}, ${attrData.id}, ${item.id}, '${modelName}', ${numBoxes},
-        ${boxLength}, ${boxWidth}, ${boxHeight},
-        ${currentArea}, ${newArea},
-        ${currentCorrugateCost}, ${newCorrugateCost},
-        ${currentDimWeight}, ${newDimWeight},
-        ${currentBillableWeight}, ${newBillableWeight},
-        ${currentFreightCost}, ${newFreightCost},
-        ${currentVoidVolume}, ${newVoidVolume},
-        ${currentVoidFillCost}, ${newVoidFillCost}
-      )`);
-    }
-  }
-
-  if (kitBoxValues.length) {
-    await db.request().query(`
-      INSERT INTO TB_KitBoxes (
-        idOrder, boxLabel, boxNumber,
+      resultTvp.rows.add(
+        idOrder, attrData.id, item.id, modelName, numBoxes,
         boxLength, boxWidth, boxHeight,
-        fromRow, toRow, model, numBoxes
-      ) VALUES ${kitBoxValues.join(',\n')}
-    `);
-  }
-
-  const MAX_BATCH_SIZE = 500;
-  for (let i = 0; i < resultValues.length; i += MAX_BATCH_SIZE) {
-    const chunk = resultValues.slice(i, i + MAX_BATCH_SIZE);
-    await db.request().query(`
-      INSERT INTO TB_Results (
-        idOrder, idAttributeData, idShipmenDataFile, model, boxNumber,
-        newAssignedBoxLength, newAssignedBoxWidth, newAssignedBoxHeight,
-        currentBoxCorrugateArea, newBoxCorrugateArea,
-        currentBoxCorrugateCost, newBoxCorrugateCost,
+        currentArea, newArea,
+        currentCorrugateCost, newCorrugateCost,
         currentDimWeight, newDimWeight,
         currentBillableWeight, newBillableWeight,
         currentFreightCost, newFreightCost,
         currentVoidVolume, newVoidVolume,
         currentVoidFillCost, newVoidFillCost
-      ) VALUES ${chunk.join(',\n')}
-    `);
+      );
+    }
   }
+
+  const req = new sql.Request(db);
+  req.input('KitBoxes', kitBoxTvp);
+  req.input('Results',  resultTvp);
+  await req.execute('usp_EvenDistribution_BulkInsert');
 }
 
-// export const runEvenVolumeModel = async (idOrder: number) => {
-//   const db = await connectToSqlServer();
-//   if (!db) throw new Error("No se pudo conectar a la base de datos");
-
-//   const shipmentResult = await db.request()
-//     .input("idOrder", idOrder)
-//     .query(`SELECT * FROM TB_ShipmentDataFile WHERE idOrder = @idOrder ORDER BY cubedItemLength DESC`);
-
-//   if (!shipmentResult?.recordset?.length) {
-//     throw new Error("No shipment data found for this order");
-//   }
-
-//   const row = shipmentResult.recordset[0];
-//   const isNormalized = row.cubedItemLength !== null && row.cubedItemLength !== undefined;
-
-//   const items: ShipmentItem[] = isNormalized
-//     ? shipmentResult.recordset
-//     : shipmentResult.recordset.flatMap(applyAABBHeuristic);
-
-//   if (!items.length) throw new Error("No valid items found for processing");
-
-//   const attrDataResult = await db.request()
-//     .input("idOrder", idOrder)
-//     .query(`SELECT * FROM TB_AttributeData WHERE idOrder = @idOrder`);
-//   if (!attrDataResult?.recordset?.length) throw new Error("No attribute data found for this order");
-//   const attrData = attrDataResult.recordset[0];
-
-//   const runCurrentBoxKitOnly = Number(attrData.runCurrentBoxKitOnly);
-//   const currentBoxUsed = Number(attrData.currentBoxUsed);
-//   const dimWeightFactor = attrData.dimWeightFactor;
-//   const packMaterialCost = attrData.packMaterialCost;
-//   const corrugateCostPerSf = attrData.corrugateCost;
-//   const freightCostPerLb = attrData.freightCostPerLb;
-
-//   const minBoxes = Number(attrData.minimunNumBox);
-//   const maxBoxes = Number(attrData.maximunNumBox);
-
-//   const boxRange = runCurrentBoxKitOnly === 0
-//     ? Array.from({ length: maxBoxes - minBoxes + 1 }, (_, i) => minBoxes + i)
-//     : [];
-
-//   await Promise.all(
-//     boxRange.map(numBoxes =>
-//       executeEvenVolume(
-//         db,
-//         items,
-//         attrData,
-//         idOrder,
-//         numBoxes,
-//         dimWeightFactor,
-//         packMaterialCost,
-//         corrugateCostPerSf,
-//         freightCostPerLb,
-//         "EvenVolume"
-//       )
-//     )
-//   );
-
-//   const boxKitResult = await db.request()
-//     .input("idOrder", idOrder)
-//     .query(`SELECT TOP 1 * FROM TB_BoxKitFile WHERE idOrder = @idOrder ORDER BY length DESC`);
-//   if (!boxKitResult?.recordset?.length) throw new Error("No box kit found for this order");
-//   const box = boxKitResult.recordset[0];
-
-//   await executeEvenVolume(
-//     db,
-//     items,
-//     attrData,
-//     idOrder,
-//     currentBoxUsed,
-//     dimWeightFactor,
-//     packMaterialCost,
-//     corrugateCostPerSf,
-//     freightCostPerLb,
-//     "CurrentEvenVolume",
-//     box.length,
-//     box.width,
-//     box.height
-//   );
-
-//   return {
-//     success: true,
-//     message: "RunEvenVolume model completed successfully"
-//   };
-// };
-export const runEvenVolumeModel = async (idOrder: number) => {
+export const runTopFrequenciesModel = async (idOrder: number) => {
   const db = await connectToSqlServer();
   if (!db) throw new Error("No se pudo conectar a la base de datos");
 
@@ -2097,8 +1834,10 @@ export const runEvenVolumeModel = async (idOrder: number) => {
 
   const row = shipmentResult.recordset[0];
   const isNormalized =
-    row.cubedItemLength !== null &&
-    row.cubedItemLength !== undefined;
+    row.cubedItemLength > 0 &&
+    row.cubedItemWidth  > 0 &&
+    row.cubedItemHeight > 0 &&
+    row.cubedItemWeight > 0;
 
   const items: ShipmentItem[] = isNormalized
     ? shipmentResult.recordset
@@ -2109,9 +1848,8 @@ export const runEvenVolumeModel = async (idOrder: number) => {
   const attrDataResult = await db.request()
     .input("idOrder", idOrder)
     .query(`SELECT * FROM TB_AttributeData WHERE idOrder = @idOrder`);
-  if (!attrDataResult?.recordset?.length) {
+  if (!attrDataResult?.recordset?.length)
     throw new Error("No attribute data found for this order");
-  }
 
   const attrData = attrDataResult.recordset[0];
 
@@ -2131,6 +1869,410 @@ export const runEvenVolumeModel = async (idOrder: number) => {
   if (runCurrentBoxKitOnly === 0) {
     const boxRange = Array.from({ length: maxBoxes - minBoxes + 1 }, (_, i) => minBoxes + i);
 
+    for (const numBoxes of boxRange) {
+      jobs.push(
+        executeTopFrequenciesModel(
+          db,
+          items,
+          attrData,
+          idOrder,
+          numBoxes,
+          dimWeightFactor,
+          packMaterialCost,
+          corrugateCostPerSf,
+          freightCostPerLb,
+          "TopFrequencies"
+        )
+      );
+    }
+
+    if (currentBoxUsed > 0) {
+      jobs.push(
+        executeTopFrequenciesModel(
+          db,
+          items,
+          attrData,
+          idOrder,
+          currentBoxUsed,
+          dimWeightFactor,
+          packMaterialCost,
+          corrugateCostPerSf,
+          freightCostPerLb,
+          "CurrentTopFrequencies"
+        )
+      );
+    }
+  } else {
+    if (currentBoxUsed <= 0) {
+      throw new Error("Attribute 'currentBoxUsed' must be > 0 when runCurrentBoxKitOnly = 1");
+    }
+
+    jobs.push(
+      executeTopFrequenciesModel(
+        db,
+        items,
+        attrData,
+        idOrder,
+        currentBoxUsed,
+        dimWeightFactor,
+        packMaterialCost,
+        corrugateCostPerSf,
+        freightCostPerLb,
+        "CurrentTopFrequencies"
+      )
+    );
+  }
+
+  await Promise.all(jobs);
+
+  return {
+    success: true,
+    message: "TopFrequencies model completed successfully (sin BoxKit)."
+  };
+};
+
+export async function executeTopFrequenciesModel(
+  db: any,
+  items: ShipmentItem[],
+  attrData: any,
+  idOrder: number,
+  numBoxes: number,
+  dimWeightFactor: number,
+  packMaterialCost: number,
+  corrugateCostPerSf: number,
+  freightCostPerLb: number,
+  modelName: string,
+  fixedBoxLength?: number,
+  fixedBoxWidth?: number,
+  fixedBoxHeight?: number
+) {
+  const enrichedItems = items.map(item => ({
+    ...item,
+    volume: item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight
+  })).sort((a, b) => b.cubedItemLength - a.cubedItemLength);
+
+  const lengthCounts: Record<number, number> = {};
+  for (const item of enrichedItems) {
+    lengthCounts[item.cubedItemLength] = (lengthCounts[item.cubedItemLength] || 0) + 1;
+  }
+
+  const sortedFrequencies = Object.entries(lengthCounts)
+    .map(([length, freq]) => ({ length: parseFloat(length), freq }))
+    .sort((a, b) => b.freq - a.freq || b.length - a.length);
+
+  const topLengths = sortedFrequencies
+    .slice(0, numBoxes - 1)
+    .map(entry => entry.length)
+    .sort((a, b) => b - a);
+
+  const cutsSet = new Set<number>();
+  for (const length of topLengths) {
+    let idx = enrichedItems.length - 1;
+    while (idx >= 0 && enrichedItems[idx].cubedItemLength !== length) idx--;
+    const cut = idx + 1;
+    if (cut > 0 && cut < enrichedItems.length) cutsSet.add(cut);
+  }
+  cutsSet.add(enrichedItems.length);
+  const cutPoints = Array.from(cutsSet).sort((a, b) => a - b);
+
+  const segments: ShipmentItem[][] = [];
+  let prev = 0;
+  for (const end of cutPoints) {
+    const segEnd = Math.max(end, prev + 1);
+    segments.push(enrichedItems.slice(prev, segEnd));
+    prev = segEnd;
+  }
+
+  const kitBoxTvp = makeKitBoxTVP();
+  const resultTvp = makeResultTVP();
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    if (!segment.length) continue;
+
+    const boxLength = fixedBoxLength ?? Math.max(...segment.map(it => it.cubedItemLength));
+    const boxWidth  = fixedBoxWidth  ?? Math.max(...segment.map(it => it.cubedItemWidth));
+    const boxHeight = fixedBoxHeight ?? Math.max(...segment.map(it => it.cubedItemHeight));
+
+    const segStartIdx = i === 0 ? 0 : cutPoints[i - 1];
+    const segEndIdx   = segStartIdx + segment.length - 1;
+    const fromRow     = segStartIdx + 1;
+    const toRow       = segEndIdx   + 1;
+
+    kitBoxTvp.rows.add(
+      idOrder, `Box ${i + 1}`, numBoxes,
+      boxLength, boxWidth, boxHeight,
+      fromRow, toRow, modelName, numBoxes
+    );
+
+    for (const item of segment) {
+      const itemVolume = item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight;
+      const currentBoxVolume = item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight;
+      const newBoxVolume = boxLength * boxWidth * boxHeight;
+
+      const currentArea = 2 * (item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight)) +
+                          2 * (item.currentAssignedBoxWidth  * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth));
+      const newArea     = 2 * (boxLength * (boxWidth + boxHeight)) +
+                          2 * (boxWidth  * (boxHeight + boxWidth));
+
+      const currentCorrugateCost = (currentArea / 144) * corrugateCostPerSf;
+      const newCorrugateCost     = (newArea  / 144) * corrugateCostPerSf;
+
+      const currentDimWeight = currentBoxVolume / dimWeightFactor;
+      const newDimWeight     = newBoxVolume     / dimWeightFactor;
+
+      const currentBillableWeight = Math.max(item.cubedItemWeight, currentDimWeight);
+      const newBillableWeight     = Math.max(item.cubedItemWeight, newDimWeight);
+
+      const currentFreightCost = currentBillableWeight * freightCostPerLb;
+      const newFreightCost     = newBillableWeight   * freightCostPerLb;
+
+      const currentVoidVolume = (currentBoxVolume - itemVolume) / 1728;
+      const newVoidVolume     = (newBoxVolume   - itemVolume) / 1728;
+
+      const currentVoidFillCost = currentVoidVolume * packMaterialCost;
+      const newVoidFillCost     = newVoidVolume   * packMaterialCost;
+
+      resultTvp.rows.add(
+        idOrder, attrData.id, item.id, modelName, numBoxes,
+        boxLength, boxWidth, boxHeight,
+        currentArea, newArea,
+        currentCorrugateCost, newCorrugateCost,
+        currentDimWeight, newDimWeight,
+        currentBillableWeight, newBillableWeight,
+        currentFreightCost, newFreightCost,
+        currentVoidVolume, newVoidVolume,
+        currentVoidFillCost, newVoidFillCost
+      );
+    }
+  }
+
+  const req = new sql.Request(db);
+  req.input('KitBoxes', kitBoxTvp);
+  req.input('Results',  resultTvp);
+  await req.execute('usp_TopFrequencies_BulkInsert');
+}
+
+async function executeEvenVolume(
+  db: any,
+  items: ShipmentItem[],
+  attrData: any,
+  idOrder: number,
+  numBoxes: number,
+  dimWeightFactor: number,
+  packMaterialCost: number,
+  corrugateCostPerSf: number,
+  freightCostPerLb: number,
+  modelName: string,
+  fixedBoxLength?: number,
+  fixedBoxWidth?: number,
+  fixedBoxHeight?: number
+) {
+  if (!items.length) throw new Error("No items to process");
+
+  type EnrichedItem = ShipmentItem & {
+    itemVolume: number;
+    cumulativeVolume?: number;
+    cumulativePercentage?: number;
+  };
+
+  const enrichedItems: EnrichedItem[] = items
+    .map(item => ({
+      ...item,
+      itemVolume: safeFloat(item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight)
+    }))
+    .sort((a, b) => b.cubedItemLength - a.cubedItemLength);
+
+  const totalVolume = enrichedItems.reduce((sum, it) => sum + it.itemVolume, 0);
+
+  let cumulativeVolume = 0;
+  enrichedItems.forEach(it => {
+    cumulativeVolume += it.itemVolume;
+    it.cumulativeVolume = cumulativeVolume;
+    it.cumulativePercentage = totalVolume > 0 ? cumulativeVolume / totalVolume : 0;
+  });
+
+  const volumeTargets = Array.from({ length: Math.max(0, numBoxes - 1) }, (_, i) => (i + 1) / numBoxes);
+  const cutsSet = new Set<number>();
+
+  for (const target of volumeTargets) {
+    const passedIdx = enrichedItems.findIndex(it => (it.cumulativePercentage ?? 0) >= target);
+    if (passedIdx === -1) continue;
+
+    const anchorLen = enrichedItems[passedIdx].cubedItemLength;
+
+    let lastIdx = passedIdx;
+    while (lastIdx + 1 < enrichedItems.length && enrichedItems[lastIdx + 1].cubedItemLength === anchorLen) {
+      lastIdx++;
+    }
+
+    const cut = lastIdx + 1;
+    if (cut > 0 && cut < enrichedItems.length) cutsSet.add(cut);
+  }
+
+  const need = (numBoxes - 1) - cutsSet.size;
+  if (need > 0) {
+    for (let k = 1; k < numBoxes; k++) {
+      const idx = Math.round((k * enrichedItems.length) / numBoxes);
+      if (idx > 0 && idx < enrichedItems.length) cutsSet.add(idx);
+      if (cutsSet.size >= (numBoxes - 1)) break;
+    }
+  }
+
+  cutsSet.add(enrichedItems.length);
+
+  const cutPoints = Array.from(cutsSet).sort((a, b) => a - b);
+  const segments: ShipmentItem[][] = [];
+  let prev = 0;
+  for (const end of cutPoints) {
+    const segEnd = Math.max(end, prev + 1);
+    const seg = enrichedItems.slice(prev, segEnd);
+    if (seg.length) segments.push(seg);
+    prev = segEnd;
+  }
+
+  while (segments.length < numBoxes) {
+    let biggestIdx = 0;
+    for (let i = 1; i < segments.length; i++) {
+      if (segments[i].length > segments[biggestIdx].length) biggestIdx = i;
+    }
+    const big = segments[biggestIdx];
+    if (big.length <= 1) break;
+
+    const mid = Math.floor(big.length / 2);
+    const left = big.slice(0, mid);
+    const right = big.slice(mid);
+    segments.splice(biggestIdx, 1, left, right);
+  }
+
+  const kitBoxTvp = makeKitBoxTVP();
+  const resultTvp = makeResultTVP();
+
+  let runningIndex = 0;
+  for (let i = 0; i < segments.length; i++) {
+    const segItems = segments[i];
+    if (!segItems.length) continue;
+
+    const boxLength = safeFloat(fixedBoxLength ?? Math.max(...segItems.map(it => it.cubedItemLength)));
+    const boxWidth  = safeFloat(fixedBoxWidth  ?? Math.max(...segItems.map(it => it.cubedItemWidth )));
+    const boxHeight = safeFloat(fixedBoxHeight ?? Math.max(...segItems.map(it => it.cubedItemHeight)));
+
+    if (!Number.isFinite(boxLength) || !Number.isFinite(boxWidth) || !Number.isFinite(boxHeight)) {
+      throw new Error(`Invalid box dimensions: ${boxLength}x${boxWidth}x${boxHeight}`);
+    }
+
+    const fromRow = runningIndex + 1;
+    const toRow   = runningIndex + segItems.length;
+    runningIndex  = toRow;
+
+    kitBoxTvp.rows.add(
+      idOrder, `Box ${i + 1}`, numBoxes,
+      boxLength, boxWidth, boxHeight,
+      fromRow, toRow, modelName, numBoxes
+    );
+
+    for (const item of segItems) {
+      const currentArea = safeFloat(
+        2 * item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
+        2 * item.currentAssignedBoxWidth * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth)
+      );
+      const newArea = safeFloat(
+        2 * boxLength * (boxWidth + boxHeight) +
+        2 * boxWidth * (boxWidth + boxHeight)
+      );
+
+      const currentBoxVolume = safeFloat(item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight);
+      const newBoxVolume     = safeFloat(boxLength * boxWidth * boxHeight);
+      const itemVolume       = safeFloat(item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight);
+
+      const currentCorrugateCost = safeFloat((currentArea / 144) * corrugateCostPerSf);
+      const newCorrugateCost     = safeFloat((newArea  / 144) * corrugateCostPerSf);
+
+      const currentDimWeight = safeFloat(currentBoxVolume / dimWeightFactor);
+      const newDimWeight     = safeFloat(newBoxVolume     / dimWeightFactor);
+
+      const currentBillableWeight = safeFloat(Math.max(item.cubedItemWeight, currentDimWeight));
+      const newBillableWeight     = safeFloat(Math.max(item.cubedItemWeight, newDimWeight));
+
+      const currentFreightCost = safeFloat(currentBillableWeight * freightCostPerLb);
+      const newFreightCost     = safeFloat(newBillableWeight   * freightCostPerLb);
+
+      const currentVoidVolume = safeFloat((currentBoxVolume - itemVolume) / 1728);
+      const newVoidVolume     = safeFloat((newBoxVolume     - itemVolume) / 1728);
+
+      const currentVoidFillCost = safeFloat(currentVoidVolume * packMaterialCost);
+      const newVoidFillCost     = safeFloat(newVoidVolume   * packMaterialCost);
+
+      resultTvp.rows.add(
+        idOrder, attrData.id, item.id, modelName, numBoxes,
+        boxLength, boxWidth, boxHeight,
+        currentArea, newArea,
+        currentCorrugateCost, newCorrugateCost,
+        currentDimWeight, newDimWeight,
+        currentBillableWeight, newBillableWeight,
+        currentFreightCost, newFreightCost,
+        currentVoidVolume, newVoidVolume,
+        currentVoidFillCost, newVoidFillCost
+      );
+    }
+  }
+
+  const req = new sql.Request(db);
+  req.input('KitBoxes', kitBoxTvp);
+  req.input('Results',  resultTvp);
+  await req.execute('dbo.usp_EvenVolume_BulkInsert');
+}
+
+export const runEvenVolumeModel = async (idOrder: number) => {
+  const db = await connectToSqlServer();
+  if (!db) throw new Error("No se pudo conectar a la base de datos");
+
+  const shipmentResult = await db.request()
+    .input("idOrder", idOrder)
+    .query(`
+      SELECT *
+      FROM TB_ShipmentDataFile
+      WHERE idOrder = @idOrder
+      ORDER BY cubedItemLength DESC
+    `);
+
+  if (!shipmentResult?.recordset?.length) {
+    throw new Error("No shipment data found for this order");
+  }
+
+  const row = shipmentResult.recordset[0];
+  const isNormalized = row.cubedItemLength !== null && row.cubedItemLength !== undefined;
+
+  const items: ShipmentItem[] = isNormalized
+    ? shipmentResult.recordset
+    : shipmentResult.recordset.flatMap(applyAABBHeuristic);
+
+  if (!items.length) throw new Error("No valid items found for processing");
+
+  const attrDataResult = await db.request()
+    .input("idOrder", idOrder)
+    .query(`SELECT * FROM TB_AttributeData WHERE idOrder = @idOrder`);
+  if (!attrDataResult?.recordset?.length) {
+    throw new Error("No attribute data found for this order");
+  }
+
+  const attrData = attrDataResult.recordset[0];
+
+  const runCurrentBoxKitOnly = Number(attrData.runCurrentBoxKitOnly);
+  const currentBoxUsed       = Number(attrData.currentBoxUsed) || 0;
+
+  const dimWeightFactor    = attrData.dimWeightFactor;
+  const packMaterialCost   = attrData.packMaterialCost;
+  const corrugateCostPerSf = attrData.corrugateCost;
+  const freightCostPerLb   = attrData.freightCostPerLb;
+
+  const minBoxes = Number(attrData.minimunNumBox);
+  const maxBoxes = Number(attrData.maximunNumBox);
+
+  const jobs: Promise<any>[] = [];
+
+  if (runCurrentBoxKitOnly === 0) {
+    const boxRange = Array.from({ length: maxBoxes - minBoxes + 1 }, (_, i) => minBoxes + i);
     for (const numBoxes of boxRange) {
       jobs.push(
         executeEvenVolume(
@@ -2192,3 +2334,270 @@ export const runEvenVolumeModel = async (idOrder: number) => {
     message: "RunEvenVolume model completed successfully (sin BoxKit)."
   };
 };
+
+export const runEvenVolumeDinamicoModel = async (idOrder: number) => {
+  const db = await connectToSqlServer();
+  if (!db) throw new Error("No se pudo conectar a la base de datos");
+
+  const itemsResult = await db.request()
+    .input("idOrder", idOrder)
+    .query(`
+      SELECT *
+      FROM TB_ShipmentDataFile
+      WHERE idOrder = @idOrder
+      ORDER BY cubedItemLength DESC
+    `);
+  if (!itemsResult?.recordset?.length) {
+    throw new Error("No shipment data found for this order");
+  }
+
+  const row = itemsResult.recordset[0];
+  const isNormalized =
+    row.cubedItemLength > 0 &&
+    row.cubedItemWidth  > 0 &&
+    row.cubedItemHeight > 0 &&
+    row.cubedItemWeight > 0;
+
+  const items: ShipmentItem[] = isNormalized
+    ? itemsResult.recordset
+    : itemsResult.recordset.flatMap(applyAABBHeuristic);
+
+  if (!items.length) throw new Error("No valid items found for processing");
+
+  const attrDataResult = await db.request()
+    .input("idOrder", idOrder)
+    .query(`SELECT * FROM TB_AttributeData WHERE idOrder = @idOrder`);
+  if (!attrDataResult?.recordset?.length) {
+    throw new Error("No attribute data found for this order");
+  }
+  const attrData = attrDataResult.recordset[0];
+
+  const runCurrentBoxKitOnly = Number(attrData.runCurrentBoxKitOnly);
+  const currentBoxUsed       = Number(attrData.currentBoxUsed) || 0;
+
+  const dimWeightFactor    = attrData.dimWeightFactor;
+  const packMaterialCost   = attrData.packMaterialCost;
+  const corrugateCostPerSf = attrData.corrugateCost;
+  const freightCostPerLb   = attrData.freightCostPerLb;
+
+  const minBoxes = Number(attrData.minimunNumBox);
+  const maxBoxes = Number(attrData.maximunNumBox);
+
+  const jobs: Promise<any>[] = [];
+
+  if (runCurrentBoxKitOnly === 0) {
+    const numBoxesArray = Array.from(
+      { length: maxBoxes - minBoxes + 1 },
+      (_, i) => minBoxes + i
+    );
+
+    for (const numBoxes of numBoxesArray) {
+      jobs.push(
+        executeEvenVolumeDinamico(
+          db,
+          items,
+          attrData,
+          idOrder,
+          numBoxes,
+          dimWeightFactor,
+          packMaterialCost,
+          corrugateCostPerSf,
+          freightCostPerLb,
+          "EvenVolumeDynamic"
+        )
+      );
+    }
+
+    if (currentBoxUsed > 0) {
+      jobs.push(
+        executeEvenVolumeDinamico(
+          db,
+          items,
+          attrData,
+          idOrder,
+          currentBoxUsed,
+          dimWeightFactor,
+          packMaterialCost,
+          corrugateCostPerSf,
+          freightCostPerLb,
+          "CurrentEvenVolumeDynamic"
+        )
+      );
+    }
+  } else {
+    if (currentBoxUsed <= 0) {
+      throw new Error("Attribute 'currentBoxUsed' must be > 0 when runCurrentBoxKitOnly = 1");
+    }
+
+    jobs.push(
+      executeEvenVolumeDinamico(
+        db,
+        items,
+        attrData,
+        idOrder,
+        currentBoxUsed,
+        dimWeightFactor,
+        packMaterialCost,
+        corrugateCostPerSf,
+        freightCostPerLb,
+        "CurrentEvenVolumeDynamic"
+      )
+    );
+  }
+
+  await Promise.all(jobs);
+
+  return {
+    success: true,
+    message: "RunEvenVolumeDynamic model completed successfully (sin BoxKit)."
+  };
+};
+
+export async function executeEvenVolumeDinamico(
+  db: any,
+  items: ShipmentItem[],
+  attrData: any,
+  idOrder: number,
+  numBoxes: number,
+  dimWeightFactor: number,
+  packMaterialCost: number,
+  corrugateCostPerSf: number,
+  freightCostPerLb: number,
+  modelName: string,
+  fixedBoxLength?: number,
+  fixedBoxWidth?: number,
+  fixedBoxHeight?: number
+) {
+  if (!items.length) throw new Error("No items to process");
+
+  const enrichedItems = items.map(item => ({
+    ...item,
+    itemVolume: item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight
+  })).sort((a, b) => b.cubedItemLength - a.cubedItemLength);
+
+  const totalVolume = enrichedItems.reduce((sum, item) => sum + item.itemVolume, 0);
+  let cumulativeVolume = 0;
+  enrichedItems.forEach(item => {
+    cumulativeVolume += item.itemVolume;
+    (item as any).cumVolume = cumulativeVolume;
+    (item as any).cumVolumePct = totalVolume > 0 ? cumulativeVolume / totalVolume : 0;
+  });
+
+  const boxes1 = Math.round(numBoxes * 0.3);
+  const boxes2 = Math.round(numBoxes * 0.4);
+  const boxes3 = numBoxes - boxes1 - boxes2;
+
+  const cut1IdxRaw = enrichedItems.findIndex(i => (i as any).cumVolumePct >= boxes1 / numBoxes);
+  const cut2IdxRaw = enrichedItems.findIndex(i => (i as any).cumVolumePct >= (boxes1 + boxes2) / numBoxes);
+  const cut1Idx = cut1IdxRaw === -1 ? 0 : cut1IdxRaw;
+  const cut2Idx = cut2IdxRaw === -1 ? enrichedItems.length : cut2IdxRaw;
+
+  const segment1 = enrichedItems.slice(0, cut1Idx);
+  const segment2 = enrichedItems.slice(cut1Idx, cut2Idx);
+  const segment3 = enrichedItems.slice(cut2Idx);
+
+  const splitSegment = (segment: typeof enrichedItems, n: number) => {
+    if (n <= 0) return [];
+    if (!segment.length) return Array.from({ length: n }, () => [] as typeof enrichedItems);
+    const avg = Math.ceil(segment.length / n);
+    const result: typeof enrichedItems[] = [];
+    for (let i = 0; i < segment.length; i += avg) {
+      result.push(segment.slice(i, i + avg));
+    }
+    while (result.length < n) result.push([] as any);
+    return result;
+  };
+
+  const boxesSegments = [
+    ...splitSegment(segment1, boxes1),
+    ...splitSegment(segment2, boxes2),
+    ...splitSegment(segment3, boxes3)
+  ];
+
+  const kitBoxTvp = makeKitBoxTVP();
+  const resultTvp = makeResultTVP();
+
+  let runningIndex = 0;
+
+  const itemBoxMap = new Map<number, { boxLength: number, boxWidth: number, boxHeight: number }>();
+
+  for (let i = 0; i < boxesSegments.length; i++) {
+    const seg = boxesSegments[i];
+
+    const boxLength: number = safeFloat(fixedBoxLength ?? Math.max(0, ...seg.map((it: ShipmentItem) => it.cubedItemLength)));
+    const boxWidth: number  = safeFloat(fixedBoxWidth  ?? Math.max(0, ...seg.map((it: ShipmentItem) => it.cubedItemWidth)));
+    const boxHeight: number = safeFloat(fixedBoxHeight ?? Math.max(0, ...seg.map((it: ShipmentItem) => it.cubedItemHeight)));
+
+    let fromRow = 0, toRow = 0;
+    if (seg.length > 0) {
+      fromRow = runningIndex + 1;
+      toRow   = runningIndex + seg.length;
+      runningIndex = toRow;
+    }
+
+    kitBoxTvp.rows.add(
+      idOrder, `Box ${i + 1}`, numBoxes,
+      boxLength, boxWidth, boxHeight,
+      fromRow, toRow, modelName, numBoxes
+    );
+
+    for (const item of seg) {
+      itemBoxMap.set(item.id, { boxLength, boxWidth, boxHeight });
+    }
+  }
+
+  for (const item of items) {
+    const dims = itemBoxMap.get(item.id);
+    if (!dims) continue;
+
+    const { boxLength, boxWidth, boxHeight } = dims;
+
+    const currentBoxVolume = safeFloat(item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight);
+    const newBoxVolume     = safeFloat(boxLength * boxWidth * boxHeight);
+    const itemVolume       = safeFloat(item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight);
+
+    const currentArea = safeFloat(
+      2*(item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight)) +
+      2*(item.currentAssignedBoxWidth  * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth))
+    );
+    const newArea = safeFloat(
+      2*(boxLength * (boxWidth + boxHeight)) +
+      2*(boxWidth  * (boxWidth + boxHeight))
+    );
+
+    const currentCorrugateCost = safeFloat((currentArea / 144) * corrugateCostPerSf);
+    const newCorrugateCost     = safeFloat((newArea  / 144) * corrugateCostPerSf);
+
+    const currentDimWeight = safeFloat(currentBoxVolume / dimWeightFactor);
+    const newDimWeight     = safeFloat(newBoxVolume     / dimWeightFactor);
+
+    const currentBillableWeight = safeFloat(Math.max(item.cubedItemWeight, currentDimWeight));
+    const newBillableWeight     = safeFloat(Math.max(item.cubedItemWeight, newDimWeight));
+
+    const currentFreightCost = safeFloat(currentBillableWeight * freightCostPerLb);
+    const newFreightCost     = safeFloat(newBillableWeight   * freightCostPerLb);
+
+    const currentVoidVolume = safeFloat((currentBoxVolume - itemVolume) / 1728);
+    const newVoidVolume     = safeFloat((newBoxVolume     - itemVolume) / 1728);
+
+    const currentVoidFillCost = safeFloat(currentVoidVolume * packMaterialCost);
+    const newVoidFillCost     = safeFloat(newVoidVolume   * packMaterialCost);
+
+    resultTvp.rows.add(
+      idOrder, attrData.id, item.id, modelName, numBoxes,
+      boxLength, boxWidth, boxHeight,
+      currentArea, newArea,
+      currentCorrugateCost, newCorrugateCost,
+      currentDimWeight, newDimWeight,
+      currentBillableWeight, newBillableWeight,
+      currentFreightCost, newFreightCost,
+      currentVoidVolume, newVoidVolume,
+      currentVoidFillCost, newVoidFillCost
+    );
+  }
+
+  const req = new sql.Request(db);
+  req.input('KitBoxes', kitBoxTvp);
+  req.input('Results',  resultTvp);
+  await req.execute('dbo.usp_EvenVolumeDynamic_BulkInsert');
+}
