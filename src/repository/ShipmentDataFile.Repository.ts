@@ -1,6 +1,6 @@
 import * as ExcelJS from 'exceljs';
 import { IresponseRepositoryService, ShipmentRow } from '../interface/ShipmentDataFile.Interface';
-import { connectToSqlServer } from '../DB/config';
+import { connectToSqlServer, logSqlError, safeRollback } from '../DB/config';
 import sql from 'mssql';
 import { applyAABBHeuristic } from './Results.repository';
 
@@ -482,7 +482,7 @@ const extractRowsFromWorksheet = (worksheet: ExcelJS.Worksheet) => {
 // ): Promise<IresponseRepositoryService> => {
 //   try {
 //     const workbook = new ExcelJS.Workbook();
-//     await workbook.xlsx.load(fileBuffer);
+//     await workbook.xlsx.load(fileBuffer as unknown as any);
 
 //     const worksheet = workbook.getWorksheet('ShipmentDataFile') || workbook.worksheets[0];
 //     if (!worksheet) {
@@ -543,7 +543,8 @@ const extractRowsFromWorksheet = (worksheet: ExcelJS.Worksheet) => {
 //         item4Length, item4Width, item4Height, item4Weight,
 //         item5Length, item5Width, item5Height, item5Weight,
 //         cubedItemLength, cubedItemWidth, cubedItemHeight, cubedItemWeight,
-//         currentAssignedBoxLength, currentAssignedBoxWidth, currentAssignedBoxHeight, idOrder, createAt
+//         currentAssignedBoxLength, currentAssignedBoxWidth, currentAssignedBoxHeight,
+//         idOrder, createAt, cubingMethod
 //       ) VALUES (
 //         @orderId, @item1Length, @item1Width, @item1Height, @item1Weight,
 //         @item2Length, @item2Width, @item2Height, @item2Weight,
@@ -551,11 +552,12 @@ const extractRowsFromWorksheet = (worksheet: ExcelJS.Worksheet) => {
 //         @item4Length, @item4Width, @item4Height, @item4Weight,
 //         @item5Length, @item5Width, @item5Height, @item5Weight,
 //         @cubedItemLength, @cubedItemWidth, @cubedItemHeight, @cubedItemWeight,
-//         @currentAssignedBoxLength, @currentAssignedBoxWidth, @currentAssignedBoxHeight, @idOrder, GETDATE()
+//         @currentAssignedBoxLength, @currentAssignedBoxWidth, @currentAssignedBoxHeight,
+//         @idOrder, GETDATE(), @cubingMethod
 //       );
 //     `;
 
-//     const rowsToInsert = extractRowsFromWorksheet(worksheet);
+//     const rowsToInsert = extractRowsFromWorksheet(worksheet) as ShipmentRow[];
 //     if (rowsToInsert.length === 0) {
 //       await transaction.rollback();
 //       return {
@@ -572,11 +574,12 @@ const extractRowsFromWorksheet = (worksheet: ExcelJS.Worksheet) => {
 //     for (const row of rowsToInsert) {
 //       try {
 //         const request = new sql.Request(transaction);
+//         let cubingMethod = 'original';
 
-//         let itemLength: any = parseDecimalValue(row.cubedItemLength);
-//         let itemWidth: any = parseDecimalValue(row.cubedItemWidth);
-//         let itemHeight: any = parseDecimalValue(row.cubedItemHeight);
-//         let itemWeight: any = parseDecimalValue(row.cubedItemWeight);
+//         let itemLength = parseDecimalValue(row.cubedItemLength);
+//         let itemWidth = parseDecimalValue(row.cubedItemWidth);
+//         let itemHeight = parseDecimalValue(row.cubedItemHeight);
+//         let itemWeight = parseDecimalValue(row.cubedItemWeight);
 
 //         const isMissingCubedDimensions =
 //           !itemLength || itemLength === 0 ||
@@ -591,6 +594,7 @@ const extractRowsFromWorksheet = (worksheet: ExcelJS.Worksheet) => {
 //             itemWidth = result[0].cubedItemWidth;
 //             itemHeight = result[0].cubedItemHeight;
 //             itemWeight = result[0].cubedItemWeight;
+//             cubingMethod = result[0].cubingMethod || 'heuristic';
 //           }
 //         }
 
@@ -603,11 +607,21 @@ const extractRowsFromWorksheet = (worksheet: ExcelJS.Worksheet) => {
 //           !currentWidth || currentWidth === 0 ||
 //           !currentHeight || currentHeight === 0;
 
-//         if (needsAssignment && boxKit.length > 0) {
+//        if (
+//           needsAssignment &&
+//           boxKit.length > 0 &&
+//           itemLength != null &&
+//           itemWidth != null &&
+//           itemHeight != null
+//         ) {
+//           const safeItemLength = itemLength;
+//           const safeItemWidth = itemWidth;
+//           const safeItemHeight = itemHeight;
+
 //           const box = boxKit.find(box =>
-//             box.length >= itemLength &&
-//             box.width >= itemWidth &&
-//             box.height >= itemHeight
+//             box.length >= safeItemLength &&
+//             box.width >= safeItemWidth &&
+//             box.height >= safeItemHeight
 //           );
 
 //           if (box) {
@@ -619,30 +633,34 @@ const extractRowsFromWorksheet = (worksheet: ExcelJS.Worksheet) => {
 //             currentLength = fallback.length;
 //             currentWidth = fallback.width;
 //             currentHeight = fallback.height;
+//             cubingMethod = 'noBoxFit';
 //           }
 //         }
 
 //         request.input('orderId', sql.Decimal(10, 2), parseDecimalValue(row.orderId));
-//         request.input('item1Length', sql.Decimal(10, 2), parseDecimalValue(row.item1Length));
-//         request.input('item1Width', sql.Decimal(10, 2), parseDecimalValue(row.item1Width));
-//         request.input('item1Height', sql.Decimal(10, 2), parseDecimalValue(row.item1Height));
-//         request.input('item1Weight', sql.Decimal(10, 2), parseDecimalValue(row.item1Weight));
-//         request.input('item2Length', sql.Decimal(10, 2), parseDecimalValue(row.item2Length));
-//         request.input('item2Width', sql.Decimal(10, 2), parseDecimalValue(row.item2Width));
-//         request.input('item2Height', sql.Decimal(10, 2), parseDecimalValue(row.item2Height));
-//         request.input('item2Weight', sql.Decimal(10, 2), parseDecimalValue(row.item2Weight));
-//         request.input('item3Length', sql.Decimal(10, 2), parseDecimalValue(row.item3Length));
-//         request.input('item3Width', sql.Decimal(10, 2), parseDecimalValue(row.item3Width));
-//         request.input('item3Height', sql.Decimal(10, 2), parseDecimalValue(row.item3Height));
-//         request.input('item3Weight', sql.Decimal(10, 2), parseDecimalValue(row.item3Weight));
-//         request.input('item4Length', sql.Decimal(10, 2), parseDecimalValue(row.item4Length));
-//         request.input('item4Width', sql.Decimal(10, 2), parseDecimalValue(row.item4Width));
-//         request.input('item4Height', sql.Decimal(10, 2), parseDecimalValue(row.item4Height));
-//         request.input('item4Weight', sql.Decimal(10, 2), parseDecimalValue(row.item4Weight));
-//         request.input('item5Length', sql.Decimal(10, 2), parseDecimalValue(row.item5Length));
-//         request.input('item5Width', sql.Decimal(10, 2), parseDecimalValue(row.item5Width));
-//         request.input('item5Height', sql.Decimal(10, 2), parseDecimalValue(row.item5Height));
-//         request.input('item5Weight', sql.Decimal(10, 2), parseDecimalValue(row.item5Weight));
+//         for (let i = 1; i <= 5; i++) {
+//           request.input(
+//             `item${i}Length`,
+//             sql.Decimal(10, 2),
+//             parseDecimalValue((row as Record<string, number | null>)[`item${i}Length`])
+//           );
+//           request.input(
+//             `item${i}Width`,
+//             sql.Decimal(10, 2),
+//             parseDecimalValue((row as Record<string, number | null>)[`item${i}Width`])
+//           );
+//           request.input(
+//             `item${i}Height`,
+//             sql.Decimal(10, 2),
+//             parseDecimalValue((row as Record<string, number | null>)[`item${i}Height`])
+//           );
+//           request.input(
+//             `item${i}Weight`,
+//             sql.Decimal(10, 2),
+//             parseDecimalValue((row as Record<string, number | null>)[`item${i}Weight`])
+//           );
+//         }
+
 //         request.input('cubedItemLength', sql.Decimal(10, 2), itemLength);
 //         request.input('cubedItemWidth', sql.Decimal(10, 2), itemWidth);
 //         request.input('cubedItemHeight', sql.Decimal(10, 2), itemHeight);
@@ -651,6 +669,7 @@ const extractRowsFromWorksheet = (worksheet: ExcelJS.Worksheet) => {
 //         request.input('currentAssignedBoxWidth', sql.Decimal(10, 2), currentWidth);
 //         request.input('currentAssignedBoxHeight', sql.Decimal(10, 2), currentHeight);
 //         request.input('idOrder', sql.Int, idOrder);
+//         request.input('cubingMethod', sql.VarChar(50), cubingMethod);
 
 //         await request.query(insertQuery);
 //         insertedRows++;
@@ -691,238 +710,194 @@ const extractRowsFromWorksheet = (worksheet: ExcelJS.Worksheet) => {
 //   }
 // };
 
-export const uploadExcelShipmentDataFile = async (
-  fileBuffer: Buffer,
-  idCompany: number,
-  fileName: string
-): Promise<IresponseRepositoryService> => {
+const D = (p=18, s=2) => sql.Decimal(p, s);
+const toDec = (v: any) => {
+  if (v === '' || v === undefined || v === null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+export const uploadExcelShipmentDataFile = async (fileBuffer: Buffer, idCompany: number, fileName: string) => {
   try {
+    // 1) Cargar Excel
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(fileBuffer as unknown as any);
-
     const worksheet = workbook.getWorksheet('ShipmentDataFile') || workbook.worksheets[0];
     if (!worksheet) {
-      return {
-        code: 400,
-        message: {
-          translationKey: 'excel.templateFileNotFound',
-          translationParams: { name: 'uploadExcelBoxKitFile' }
-        }
-      };
+      return { code: 400, message: { translationKey: 'excel.templateFileNotFound', translationParams: { name: 'uploadExcelBoxKitFile' } } };
     }
 
+    // 2) Conexión y transacción
     const db = await connectToSqlServer();
     const transaction = new sql.Transaction(db);
     await transaction.begin();
 
-    const getOrderRequest = new sql.Request(transaction);
-    getOrderRequest.input('idCompany', sql.Int, idCompany);
-    const orderResult = await getOrderRequest.query(`
-      SELECT TOP 1 id FROM TB_Order WHERE idCompany = @idCompany ORDER BY createAt DESC;
-    `);
+    try {
+      // 3) Obtener idOrder
+      const getOrderRequest = new sql.Request(transaction);
+      getOrderRequest.input('idCompany', sql.Int, idCompany);
+      const orderResult = await getOrderRequest.query(`
+        SELECT TOP 1 id FROM TB_Order WHERE idCompany = @idCompany ORDER BY createAt DESC;
+      `);
+      if (orderResult.recordset.length === 0) {
+        await safeRollback(transaction);
+        return { code: 404, message: { translationKey: 'order.notFound', translationParams: { idCompany } } };
+      }
+      const idOrder: number = orderResult.recordset[0].id;
 
-    if (orderResult.recordset.length === 0) {
-      await transaction.rollback();
-      return {
-        code: 404,
-        message: {
-          translationKey: 'order.notFound',
-          translationParams: { idCompany }
-        }
-      };
-    }
+      // 4) Marcar estado y registrar nombre de archivo
+      await new sql.Request(transaction)
+        .input('idOrder', sql.Int, idOrder)
+        .input('idStatusData', sql.Int, 3)
+        .query(`UPDATE TB_Order SET idStatusData = @idStatusData WHERE id = @idOrder;`);
 
-    const idOrder = orderResult.recordset[0].id;
+      await new sql.Request(transaction)
+        .input('fileName', sql.VarChar(255), fileName)
+        .input('fileType', sql.VarChar(100), 'ShipmentDataFile')
+        .input('idOrder', sql.Int, idOrder)
+        .query(`
+          INSERT INTO TB_NameFile (fileName, fileType, uploadedAt, idOrder)
+          VALUES (@fileName, @fileType, GETDATE(), @idOrder);
+        `);
 
-    await new sql.Request(transaction)
-      .input('idOrder', sql.Int, idOrder)
-      .input('idStatusData', sql.Int, 3)
-      .query(`UPDATE TB_Order SET idStatusData = @idStatusData WHERE id = @idOrder;`);
+      // 5) Traer BoxKit
+      const boxKitQuery = await new sql.Request(transaction)
+        .input('idOrder', sql.Int, idOrder)
+        .query(`SELECT length, width, height FROM TB_BoxKitFile WHERE idOrder = @idOrder ORDER BY length ASC;`);
+      const boxKit = boxKitQuery.recordset as Array<{ length: number; width: number; height: number }>;
 
-    await new sql.Request(transaction)
-      .input('fileName', sql.VarChar(255), fileName)
-      .input('fileType', sql.VarChar(100), 'ShipmentDataFile')
-      .input('idOrder', sql.Int, idOrder)
-      .query(`INSERT INTO TB_NameFile (fileName, fileType, uploadedAt, idOrder)
-              VALUES (@fileName, @fileType, GETDATE(), @idOrder);`);
+      // 6) Extraer filas del Excel
+      const rows = extractRowsFromWorksheet(worksheet) as ShipmentRow[];
+      if (!rows?.length) {
+        await safeRollback(transaction);
+        return { code: 400, message: { translationKey: 'excel.noValidRows', translationParams: {} } };
+      }
 
-    const boxKitQuery = await new sql.Request(transaction)
-      .input('idOrder', sql.Int, idOrder)
-      .query(`SELECT * FROM TB_BoxKitFile WHERE idOrder = @idOrder ORDER BY length ASC`);
-    const boxKit = boxKitQuery.recordset;
+      // 7) Preparar PreparedStatement (usa exactamente TU lista de columnas)
+const ps = new sql.PreparedStatement(transaction);
+ps.input('orderId', sql.Decimal(18, 2));
+for (let i = 1; i <= 5; i++) {
+  ps.input(`item${i}Length`, sql.Decimal(18, 2));
+  ps.input(`item${i}Width`,  sql.Decimal(18, 2));
+  ps.input(`item${i}Height`, sql.Decimal(18, 2));
+  ps.input(`item${i}Weight`, sql.Decimal(18, 2));
+}
+ps.input('cubedItemLength', sql.Decimal(18, 2));
+ps.input('cubedItemWidth',  sql.Decimal(18, 2));
+ps.input('cubedItemHeight', sql.Decimal(18, 2));
+ps.input('cubedItemWeight', sql.Decimal(18, 2));
+ps.input('currentAssignedBoxLength', sql.Decimal(18, 2));
+ps.input('currentAssignedBoxWidth',  sql.Decimal(18, 2));
+ps.input('currentAssignedBoxHeight', sql.Decimal(18, 2));
+ps.input('idOrder', sql.Int);
+ps.input('createAt', sql.DateTime);
+ps.input('cubingMethod', sql.VarChar(50));
 
-    const insertQuery = `
-      INSERT INTO TB_ShipmentDataFile (
-        orderId, item1Length, item1Width, item1Height, item1Weight,
-        item2Length, item2Width, item2Height, item2Weight,
-        item3Length, item3Width, item3Height, item3Weight,
-        item4Length, item4Width, item4Height, item4Weight,
-        item5Length, item5Width, item5Height, item5Weight,
-        cubedItemLength, cubedItemWidth, cubedItemHeight, cubedItemWeight,
-        currentAssignedBoxLength, currentAssignedBoxWidth, currentAssignedBoxHeight,
-        idOrder, createAt, cubingMethod
-      ) VALUES (
-        @orderId, @item1Length, @item1Width, @item1Height, @item1Weight,
-        @item2Length, @item2Width, @item2Height, @item2Weight,
-        @item3Length, @item3Width, @item3Height, @item3Weight,
-        @item4Length, @item4Width, @item4Height, @item4Weight,
-        @item5Length, @item5Width, @item5Height, @item5Weight,
-        @cubedItemLength, @cubedItemWidth, @cubedItemHeight, @cubedItemWeight,
-        @currentAssignedBoxLength, @currentAssignedBoxWidth, @currentAssignedBoxHeight,
-        @idOrder, GETDATE(), @cubingMethod
-      );
-    `;
+const insertSql = `
+INSERT INTO TB_ShipmentDataFile (
+  orderId,
+  item1Length, item1Width, item1Height, item1Weight,
+  item2Length, item2Width, item2Height, item2Weight,
+  item3Length, item3Width, item3Height, item3Weight,
+  item4Length, item4Width, item4Height, item4Weight,
+  item5Length, item5Width, item5Height, item5Weight,
+  cubedItemLength, cubedItemWidth, cubedItemHeight, cubedItemWeight,
+  currentAssignedBoxLength, currentAssignedBoxWidth, currentAssignedBoxHeight,
+  idOrder, createAt, cubingMethod
+) VALUES (
+  @orderId,
+  @item1Length, @item1Width, @item1Height, @item1Weight,
+  @item2Length, @item2Width, @item2Height, @item2Weight,
+  @item3Length, @item3Width, @item3Height, @item3Weight,
+  @item4Length, @item4Width, @item4Height, @item4Weight,
+  @item5Length, @item5Width, @item5Height, @item5Weight,
+  @cubedItemLength, @cubedItemWidth, @cubedItemHeight, @cubedItemWeight,
+  @currentAssignedBoxLength, @currentAssignedBoxWidth, @currentAssignedBoxHeight,
+  @idOrder, @createAt, @cubingMethod
+);
+`;
 
-    const rowsToInsert = extractRowsFromWorksheet(worksheet) as ShipmentRow[];
-    if (rowsToInsert.length === 0) {
-      await transaction.rollback();
-      return {
-        code: 400,
-        message: {
-          translationKey: 'excel.noValidRows',
-          translationParams: {}
-        }
-      };
-    }
+await ps.prepare(insertSql);
 
-    let insertedRows = 0;
+// 8) Ejecutar en lotes para performance (sin paralelizar dentro de la misma TX)
+const now = new Date();
 
-    for (const row of rowsToInsert) {
-      try {
-        const request = new sql.Request(transaction);
-        let cubingMethod = 'original';
+const toDec = (v: any) => {
+  if (v === '' || v === undefined || v === null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
 
-        let itemLength = parseDecimalValue(row.cubedItemLength);
-        let itemWidth = parseDecimalValue(row.cubedItemWidth);
-        let itemHeight = parseDecimalValue(row.cubedItemHeight);
-        let itemWeight = parseDecimalValue(row.cubedItemWeight);
+const BATCH = 1000; // ajusta según tamaño
+for (let i = 0; i < rows.length; i += BATCH) {
+  const chunk = rows.slice(i, i + BATCH);
 
-        const isMissingCubedDimensions =
-          !itemLength || itemLength === 0 ||
-          !itemWidth || itemWidth === 0 ||
-          !itemHeight || itemHeight === 0 ||
-          !itemWeight || itemWeight === 0;
+  for (const row of chunk) {
+    // ← aquí dejas tu preprocesamiento AABB / noBoxFit tal cual lo tienes
+    let L = toDec(row.cubedItemLength);
+    let W = toDec(row.cubedItemWidth);
+    let H = toDec(row.cubedItemHeight);
+    let WT = toDec(row.cubedItemWeight);
+    let cubingMethod = 'original';
 
-        if (isMissingCubedDimensions) {
-          const result = applyAABBHeuristic(row);
-          if (result.length > 0) {
-            itemLength = result[0].cubedItemLength;
-            itemWidth = result[0].cubedItemWidth;
-            itemHeight = result[0].cubedItemHeight;
-            itemWeight = result[0].cubedItemWeight;
-            cubingMethod = result[0].cubingMethod || 'heuristic';
-          }
-        }
-
-        let currentLength = parseDecimalValue(row.currentAssignedBoxLength);
-        let currentWidth = parseDecimalValue(row.currentAssignedBoxWidth);
-        let currentHeight = parseDecimalValue(row.currentAssignedBoxHeight);
-
-        const needsAssignment =
-          !currentLength || currentLength === 0 ||
-          !currentWidth || currentWidth === 0 ||
-          !currentHeight || currentHeight === 0;
-
-       if (
-          needsAssignment &&
-          boxKit.length > 0 &&
-          itemLength != null &&
-          itemWidth != null &&
-          itemHeight != null
-        ) {
-          const safeItemLength = itemLength;
-          const safeItemWidth = itemWidth;
-          const safeItemHeight = itemHeight;
-
-          const box = boxKit.find(box =>
-            box.length >= safeItemLength &&
-            box.width >= safeItemWidth &&
-            box.height >= safeItemHeight
-          );
-
-          if (box) {
-            currentLength = box.length;
-            currentWidth = box.width;
-            currentHeight = box.height;
-          } else {
-            const fallback = boxKit[boxKit.length - 1];
-            currentLength = fallback.length;
-            currentWidth = fallback.width;
-            currentHeight = fallback.height;
-            cubingMethod = 'noBoxFit';
-          }
-        }
-
-        request.input('orderId', sql.Decimal(10, 2), parseDecimalValue(row.orderId));
-        for (let i = 1; i <= 5; i++) {
-          request.input(
-            `item${i}Length`,
-            sql.Decimal(10, 2),
-            parseDecimalValue((row as Record<string, number | null>)[`item${i}Length`])
-          );
-          request.input(
-            `item${i}Width`,
-            sql.Decimal(10, 2),
-            parseDecimalValue((row as Record<string, number | null>)[`item${i}Width`])
-          );
-          request.input(
-            `item${i}Height`,
-            sql.Decimal(10, 2),
-            parseDecimalValue((row as Record<string, number | null>)[`item${i}Height`])
-          );
-          request.input(
-            `item${i}Weight`,
-            sql.Decimal(10, 2),
-            parseDecimalValue((row as Record<string, number | null>)[`item${i}Weight`])
-          );
-        }
-
-        request.input('cubedItemLength', sql.Decimal(10, 2), itemLength);
-        request.input('cubedItemWidth', sql.Decimal(10, 2), itemWidth);
-        request.input('cubedItemHeight', sql.Decimal(10, 2), itemHeight);
-        request.input('cubedItemWeight', sql.Decimal(10, 2), itemWeight);
-        request.input('currentAssignedBoxLength', sql.Decimal(10, 2), currentLength);
-        request.input('currentAssignedBoxWidth', sql.Decimal(10, 2), currentWidth);
-        request.input('currentAssignedBoxHeight', sql.Decimal(10, 2), currentHeight);
-        request.input('idOrder', sql.Int, idOrder);
-        request.input('cubingMethod', sql.VarChar(50), cubingMethod);
-
-        await request.query(insertQuery);
-        insertedRows++;
-      } catch (error) {
-        console.error(`Error inserting row for orderId ${idOrder}`, error);
+    const missing = !L || !W || !H || !WT;
+    if (missing) {
+      const aabb = applyAABBHeuristic(row);
+      if (aabb?.length) {
+        L  = toDec(aabb[0].cubedItemLength);
+        W  = toDec(aabb[0].cubedItemWidth);
+        H  = toDec(aabb[0].cubedItemHeight);
+        WT = toDec(aabb[0].cubedItemWeight);
+        cubingMethod = aabb[0].cubingMethod || 'heuristic';
       }
     }
 
-    if (insertedRows > 0) {
+    let curL = toDec(row.currentAssignedBoxLength);
+    let curW = toDec(row.currentAssignedBoxWidth);
+    let curH = toDec(row.currentAssignedBoxHeight);
+
+    const needsAssign = !curL || !curW || !curH;
+    if (needsAssign && boxKit.length && L != null && W != null && H != null) {
+      const found = boxKit.find(b => b.length >= (L as number) && b.width >= (W as number) && b.height >= (H as number));
+      if (found) {
+        curL = found.length; curW = found.width; curH = found.height;
+      } else {
+        const fb = boxKit[boxKit.length - 1];
+        curL = fb.length; curW = fb.width; curH = fb.height;
+        cubingMethod = 'noBoxFit';
+      }
+    }
+
+    await ps.execute({
+      orderId: toDec(row.orderId),
+      item1Length: toDec(row.item1Length), item1Width: toDec(row.item1Width), item1Height: toDec(row.item1Height), item1Weight: toDec(row.item1Weight),
+      item2Length: toDec(row.item2Length), item2Width: toDec(row.item2Width), item2Height: toDec(row.item2Height), item2Weight: toDec(row.item2Weight),
+      item3Length: toDec(row.item3Length), item3Width: toDec(row.item3Width), item3Height: toDec(row.item3Height), item3Weight: toDec(row.item3Weight),
+      item4Length: toDec(row.item4Length), item4Width: toDec(row.item4Width), item4Height: toDec(row.item4Height), item4Weight: toDec(row.item4Weight),
+      item5Length: toDec(row.item5Length), item5Width: toDec(row.item5Width), item5Height: toDec(row.item5Height), item5Weight: toDec(row.item5Weight),
+      cubedItemLength: L, cubedItemWidth: W, cubedItemHeight: H, cubedItemWeight: WT,
+      currentAssignedBoxLength: curL, currentAssignedBoxWidth: curW, currentAssignedBoxHeight: curH,
+      idOrder, createAt: now, cubingMethod
+    });
+  }
+}
+
+await ps.unprepare();
+
+      // 9) BULK — captura error original
+      // (bulk insert not used; rows inserted via PreparedStatement above)
+
       await transaction.commit();
-      return {
-        code: 200,
-        message: {
-          translationKey: 'excel.template_generated',
-          translationParams: { name: 'uploadExcelBoxKitFile' }
-        }
-      };
-    } else {
-      await transaction.rollback();
-      return {
-        code: 400,
-        message: {
-          translationKey: 'excel.noRowsInserted',
-          translationParams: { name: 'uploadExcelBoxKitFile' }
-        }
-      };
+      return { code: 200, message: { translationKey: 'excel.template_generated', translationParams: { name: 'uploadExcelBoxKitFile' } } };
+
+    } catch (e) {
+      logSqlError(e, 'uploadExcelShipmentDataFile');
+      await safeRollback(transaction);
+      return { code: 500, message: { translationKey: 'excel.error_server', translationParams: { name: 'uploadExcelBoxKitFile' } } };
     }
 
   } catch (err) {
-    console.error('server error:', err);
-    return {
-      code: 500,
-      message: {
-        translationKey: 'excel.error_server',
-        translationParams: { name: 'uploadExcelBoxKitFile' }
-      }
-    };
+    logSqlError(err, 'outer-catch');
+    return { code: 500, message: { translationKey: 'excel.error_server', translationParams: { name: 'uploadExcelBoxKitFile' } } };
   }
 };
 
