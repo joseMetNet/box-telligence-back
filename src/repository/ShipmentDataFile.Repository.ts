@@ -1,6 +1,6 @@
 import * as ExcelJS from 'exceljs';
 import { IresponseRepositoryService, ShipmentRow } from '../interface/ShipmentDataFile.Interface';
-import { connectToSqlServer, logSqlError, safeRollback } from '../DB/config';
+import { connectToSqlServer, /*logSqlError, safeRollback*/ } from '../DB/config';
 import sql from 'mssql';
 import { applyAABBHeuristic } from './Results.repository';
 
@@ -710,23 +710,91 @@ const extractRowsFromWorksheet = (worksheet: ExcelJS.Worksheet) => {
 //   }
 // };
 
-const D = (p=18, s=2) => sql.Decimal(p, s);
-const toDec = (v: any) => {
+
+// ---------- Helpers mínimos (locales) ----------
+function toDec(v: any): number | null {
   if (v === '' || v === undefined || v === null) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
-};
-export const uploadExcelShipmentDataFile = async (fileBuffer: Buffer, idCompany: number, fileName: string) => {
+}
+
+async function safeRollback(tx: sql.Transaction) {
+  try {
+    await tx.rollback();
+  } catch (e: any) {
+    if (e?.code === 'EABORT' || e?.code === 'EALREADYROLLEDBACK') return;
+    console.error('Error haciendo rollback:', e);
+  }
+}
+
+function logSqlError(e: any, ctx = '') {
+  console.error(`SQL ERROR ${ctx} ::`, {
+    message: e?.message,
+    code: e?.code,
+    number: e?.number,
+    state: e?.state,
+    class: e?.class,
+    lineNumber: e?.lineNumber,
+    serverName: e?.serverName,
+    procName: e?.procName,
+    precedingErrors: e?.precedingErrors,
+  });
+}
+
+// Crea un TVP con el esquema EXACTO del tipo dbo.ShipmentDataRow (mismo orden y tipos)
+function makeShipmentTVP(sqlLib: typeof sql) {
+  const tvp = new sqlLib.Table('dbo.ShipmentDataRow'); // nombre del TYPE, no de tabla
+  tvp.columns.add('orderId',                  sqlLib.Decimal(18,2));
+  tvp.columns.add('item1Length',              sqlLib.Decimal(18,2));
+  tvp.columns.add('item1Width',               sqlLib.Decimal(18,2));
+  tvp.columns.add('item1Height',              sqlLib.Decimal(18,2));
+  tvp.columns.add('item1Weight',              sqlLib.Decimal(18,2));
+  tvp.columns.add('item2Length',              sqlLib.Decimal(18,2));
+  tvp.columns.add('item2Width',               sqlLib.Decimal(18,2));
+  tvp.columns.add('item2Height',              sqlLib.Decimal(18,2));
+  tvp.columns.add('item2Weight',              sqlLib.Decimal(18,2));
+  tvp.columns.add('item3Length',              sqlLib.Decimal(18,2));
+  tvp.columns.add('item3Width',               sqlLib.Decimal(18,2));
+  tvp.columns.add('item3Height',              sqlLib.Decimal(18,2));
+  tvp.columns.add('item3Weight',              sqlLib.Decimal(18,2));
+  tvp.columns.add('item4Length',              sqlLib.Decimal(18,2));
+  tvp.columns.add('item4Width',               sqlLib.Decimal(18,2));
+  tvp.columns.add('item4Height',              sqlLib.Decimal(18,2));
+  tvp.columns.add('item4Weight',              sqlLib.Decimal(18,2));
+  tvp.columns.add('item5Length',              sqlLib.Decimal(18,2));
+  tvp.columns.add('item5Width',               sqlLib.Decimal(18,2));
+  tvp.columns.add('item5Height',              sqlLib.Decimal(18,2));
+  tvp.columns.add('item5Weight',              sqlLib.Decimal(18,2));
+  tvp.columns.add('cubedItemLength',          sqlLib.Decimal(18,2));
+  tvp.columns.add('cubedItemWidth',           sqlLib.Decimal(18,2));
+  tvp.columns.add('cubedItemHeight',          sqlLib.Decimal(18,2));
+  tvp.columns.add('cubedItemWeight',          sqlLib.Decimal(18,2));
+  tvp.columns.add('currentAssignedBoxLength', sqlLib.Decimal(18,2));
+  tvp.columns.add('currentAssignedBoxWidth',  sqlLib.Decimal(18,2));
+  tvp.columns.add('currentAssignedBoxHeight', sqlLib.Decimal(18,2));
+  tvp.columns.add('cubingMethod',             sqlLib.VarChar(50));
+  return tvp;
+}
+
+// ---------- Tu función completa con TVP ----------
+export const uploadExcelShipmentDataFile = async (
+  fileBuffer: Buffer,
+  idCompany: number,
+  fileName: string
+) => {
   try {
     // 1) Cargar Excel
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(fileBuffer as unknown as any);
     const worksheet = workbook.getWorksheet('ShipmentDataFile') || workbook.worksheets[0];
     if (!worksheet) {
-      return { code: 400, message: { translationKey: 'excel.templateFileNotFound', translationParams: { name: 'uploadExcelBoxKitFile' } } };
+      return {
+        code: 400,
+        message: { translationKey: 'excel.templateFileNotFound', translationParams: { name: 'uploadExcelBoxKitFile' } }
+      };
     }
 
-    // 2) Conexión y transacción
+    // 2) Conexión + TX
     const db = await connectToSqlServer();
     const transaction = new sql.Transaction(db);
     await transaction.begin();
@@ -762,142 +830,113 @@ export const uploadExcelShipmentDataFile = async (fileBuffer: Buffer, idCompany:
       // 5) Traer BoxKit
       const boxKitQuery = await new sql.Request(transaction)
         .input('idOrder', sql.Int, idOrder)
-        .query(`SELECT length, width, height FROM TB_BoxKitFile WHERE idOrder = @idOrder ORDER BY length ASC;`);
+        .query(`
+          SELECT length, width, height
+          FROM TB_BoxKitFile
+          WHERE idOrder = @idOrder
+          ORDER BY length ASC;
+        `);
       const boxKit = boxKitQuery.recordset as Array<{ length: number; width: number; height: number }>;
 
       // 6) Extraer filas del Excel
-      const rows = extractRowsFromWorksheet(worksheet) as ShipmentRow[];
+      const rows = extractRowsFromWorksheet(worksheet) as ShipmentRow[]; // <-- tu helper existente
       if (!rows?.length) {
         await safeRollback(transaction);
         return { code: 400, message: { translationKey: 'excel.noValidRows', translationParams: {} } };
       }
 
-      // 7) Preparar PreparedStatement (usa exactamente TU lista de columnas)
-const ps = new sql.PreparedStatement(transaction);
-ps.input('orderId', sql.Decimal(18, 2));
-for (let i = 1; i <= 5; i++) {
-  ps.input(`item${i}Length`, sql.Decimal(18, 2));
-  ps.input(`item${i}Width`,  sql.Decimal(18, 2));
-  ps.input(`item${i}Height`, sql.Decimal(18, 2));
-  ps.input(`item${i}Weight`, sql.Decimal(18, 2));
-}
-ps.input('cubedItemLength', sql.Decimal(18, 2));
-ps.input('cubedItemWidth',  sql.Decimal(18, 2));
-ps.input('cubedItemHeight', sql.Decimal(18, 2));
-ps.input('cubedItemWeight', sql.Decimal(18, 2));
-ps.input('currentAssignedBoxLength', sql.Decimal(18, 2));
-ps.input('currentAssignedBoxWidth',  sql.Decimal(18, 2));
-ps.input('currentAssignedBoxHeight', sql.Decimal(18, 2));
-ps.input('idOrder', sql.Int);
-ps.input('createAt', sql.DateTime);
-ps.input('cubingMethod', sql.VarChar(50));
+      // 7) Armar y enviar TVPs en LOTES
+      const BATCH = 10000; // ajusta 5k–20k según memoria/tiempo
+      let totalInserted = 0;
 
-const insertSql = `
-INSERT INTO TB_ShipmentDataFile (
-  orderId,
-  item1Length, item1Width, item1Height, item1Weight,
-  item2Length, item2Width, item2Height, item2Weight,
-  item3Length, item3Width, item3Height, item3Weight,
-  item4Length, item4Width, item4Height, item4Weight,
-  item5Length, item5Width, item5Height, item5Weight,
-  cubedItemLength, cubedItemWidth, cubedItemHeight, cubedItemWeight,
-  currentAssignedBoxLength, currentAssignedBoxWidth, currentAssignedBoxHeight,
-  idOrder, createAt, cubingMethod
-) VALUES (
-  @orderId,
-  @item1Length, @item1Width, @item1Height, @item1Weight,
-  @item2Length, @item2Width, @item2Height, @item2Weight,
-  @item3Length, @item3Width, @item3Height, @item3Weight,
-  @item4Length, @item4Width, @item4Height, @item4Weight,
-  @item5Length, @item5Width, @item5Height, @item5Weight,
-  @cubedItemLength, @cubedItemWidth, @cubedItemHeight, @cubedItemWeight,
-  @currentAssignedBoxLength, @currentAssignedBoxWidth, @currentAssignedBoxHeight,
-  @idOrder, @createAt, @cubingMethod
-);
-`;
+      for (let i = 0; i < rows.length; i += BATCH) {
+        const chunk = rows.slice(i, i + BATCH);
+        const tvp = makeShipmentTVP(sql);
 
-await ps.prepare(insertSql);
+        for (const row of chunk) {
+          // --- Preprocesamiento AABB + asignación de caja (igual que ya tenías) ---
+          let L = toDec(row.cubedItemLength);
+          let W = toDec(row.cubedItemWidth);
+          let H = toDec(row.cubedItemHeight);
+          let WT = toDec(row.cubedItemWeight);
+          let cubingMethod: string | null = 'original';
 
-// 8) Ejecutar en lotes para performance (sin paralelizar dentro de la misma TX)
-const now = new Date();
+          const missing = !L || !W || !H || !WT;
+          if (missing) {
+            const aabb = applyAABBHeuristic(row); // <-- tu helper existente
+            if (aabb?.length) {
+              L  = toDec(aabb[0].cubedItemLength);
+              W  = toDec(aabb[0].cubedItemWidth);
+              H  = toDec(aabb[0].cubedItemHeight);
+              WT = toDec(aabb[0].cubedItemWeight);
+              cubingMethod = aabb[0].cubingMethod || 'heuristic';
+            }
+          }
 
-const toDec = (v: any) => {
-  if (v === '' || v === undefined || v === null) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-};
+          let curL = toDec(row.currentAssignedBoxLength);
+          let curW = toDec(row.currentAssignedBoxWidth);
+          let curH = toDec(row.currentAssignedBoxHeight);
 
-const BATCH = 1000; // ajusta según tamaño
-for (let i = 0; i < rows.length; i += BATCH) {
-  const chunk = rows.slice(i, i + BATCH);
+          const needsAssign = !curL || !curW || !curH;
+          if (needsAssign && boxKit.length && L != null && W != null && H != null) {
+            const found = boxKit.find(
+              b => b.length >= (L as number) && b.width >= (W as number) && b.height >= (H as number)
+            );
+            if (found) {
+              curL = found.length; curW = found.width; curH = found.height;
+            } else {
+              const fb = boxKit[boxKit.length - 1];
+              curL = fb.length; curW = fb.width; curH = fb.height;
+              cubingMethod = 'noBoxFit';
+            }
+          }
 
-  for (const row of chunk) {
-    // ← aquí dejas tu preprocesamiento AABB / noBoxFit tal cual lo tienes
-    let L = toDec(row.cubedItemLength);
-    let W = toDec(row.cubedItemWidth);
-    let H = toDec(row.cubedItemHeight);
-    let WT = toDec(row.cubedItemWeight);
-    let cubingMethod = 'original';
+          // --- Agregar la fila al TVP (ORDEN EXACTO del TYPE) ---
+          tvp.rows.add(
+            toDec(row.orderId),
+            toDec(row.item1Length), toDec(row.item1Width), toDec(row.item1Height), toDec(row.item1Weight),
+            toDec(row.item2Length), toDec(row.item2Width), toDec(row.item2Height), toDec(row.item2Weight),
+            toDec(row.item3Length), toDec(row.item3Width), toDec(row.item3Height), toDec(row.item3Weight),
+            toDec(row.item4Length), toDec(row.item4Width), toDec(row.item4Height), toDec(row.item4Weight),
+            toDec(row.item5Length), toDec(row.item5Width), toDec(row.item5Height), toDec(row.item5Weight),
+            L, W, H, WT,
+            curL, curW, curH,
+            cubingMethod
+          );
+        }
 
-    const missing = !L || !W || !H || !WT;
-    if (missing) {
-      const aabb = applyAABBHeuristic(row);
-      if (aabb?.length) {
-        L  = toDec(aabb[0].cubedItemLength);
-        W  = toDec(aabb[0].cubedItemWidth);
-        H  = toDec(aabb[0].cubedItemHeight);
-        WT = toDec(aabb[0].cubedItemWeight);
-        cubingMethod = aabb[0].cubingMethod || 'heuristic';
+        // 8) Ejecutar SP con el TVP (1 round-trip por lote)
+        const req = new sql.Request(transaction);
+        req.input('IdOrder', sql.Int, idOrder);
+        req.input('Rows', tvp);
+        await req.execute('dbo.usp_ShipmentDataFile_BulkInsert');
+
+        totalInserted += tvp.rows.length;
+        console.log(`Inserción TVP: ${totalInserted}/${rows.length}`);
       }
-    }
 
-    let curL = toDec(row.currentAssignedBoxLength);
-    let curW = toDec(row.currentAssignedBoxWidth);
-    let curH = toDec(row.currentAssignedBoxHeight);
-
-    const needsAssign = !curL || !curW || !curH;
-    if (needsAssign && boxKit.length && L != null && W != null && H != null) {
-      const found = boxKit.find(b => b.length >= (L as number) && b.width >= (W as number) && b.height >= (H as number));
-      if (found) {
-        curL = found.length; curW = found.width; curH = found.height;
-      } else {
-        const fb = boxKit[boxKit.length - 1];
-        curL = fb.length; curW = fb.width; curH = fb.height;
-        cubingMethod = 'noBoxFit';
-      }
-    }
-
-    await ps.execute({
-      orderId: toDec(row.orderId),
-      item1Length: toDec(row.item1Length), item1Width: toDec(row.item1Width), item1Height: toDec(row.item1Height), item1Weight: toDec(row.item1Weight),
-      item2Length: toDec(row.item2Length), item2Width: toDec(row.item2Width), item2Height: toDec(row.item2Height), item2Weight: toDec(row.item2Weight),
-      item3Length: toDec(row.item3Length), item3Width: toDec(row.item3Width), item3Height: toDec(row.item3Height), item3Weight: toDec(row.item3Weight),
-      item4Length: toDec(row.item4Length), item4Width: toDec(row.item4Width), item4Height: toDec(row.item4Height), item4Weight: toDec(row.item4Weight),
-      item5Length: toDec(row.item5Length), item5Width: toDec(row.item5Width), item5Height: toDec(row.item5Height), item5Weight: toDec(row.item5Weight),
-      cubedItemLength: L, cubedItemWidth: W, cubedItemHeight: H, cubedItemWeight: WT,
-      currentAssignedBoxLength: curL, currentAssignedBoxWidth: curW, currentAssignedBoxHeight: curH,
-      idOrder, createAt: now, cubingMethod
-    });
-  }
-}
-
-await ps.unprepare();
-
-      // 9) BULK — captura error original
-      // (bulk insert not used; rows inserted via PreparedStatement above)
-
+      // 9) Commit
       await transaction.commit();
-      return { code: 200, message: { translationKey: 'excel.template_generated', translationParams: { name: 'uploadExcelBoxKitFile' } } };
+      return {
+        code: 200,
+        message: { translationKey: 'excel.template_generated', translationParams: { name: 'uploadExcelBoxKitFile' } }
+      };
 
     } catch (e) {
       logSqlError(e, 'uploadExcelShipmentDataFile');
       await safeRollback(transaction);
-      return { code: 500, message: { translationKey: 'excel.error_server', translationParams: { name: 'uploadExcelBoxKitFile' } } };
+      return {
+        code: 500,
+        message: { translationKey: 'excel.error_server', translationParams: { name: 'uploadExcelBoxKitFile' } }
+      };
     }
 
   } catch (err) {
     logSqlError(err, 'outer-catch');
-    return { code: 500, message: { translationKey: 'excel.error_server', translationParams: { name: 'uploadExcelBoxKitFile' } } };
+    return {
+      code: 500,
+      message: { translationKey: 'excel.error_server', translationParams: { name: 'uploadExcelBoxKitFile' } }
+    };
   }
 };
 
