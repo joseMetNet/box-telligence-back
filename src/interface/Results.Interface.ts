@@ -102,3 +102,5 @@ export interface IExistsResultResponse {
 export interface IValidateResultResponse {
     exists: 1 | 0;
 }
+
+export type Boundary = { start: number; end: number };
