@@ -9,122 +9,129 @@ import * as sql from 'mssql';
 //   res: Response
 // ) => {
 //   const db = await connectToSqlServer();
-//   if (!db) throw new Error("No se pudo conectar a la base de datos");
+//   if (!db) throw new Error('No se pudo conectar a la base de datos');
 
 //   const modelsResult = await db
 //     .request()
-//     .input("idOrder", idOrder)
+//     .input('idOrder', idOrder)
 //     .query(`
 //       SELECT DISTINCT model
 //       FROM TB_Results
 //       WHERE idOrder = @idOrder
 //     `);
 
-//   const allModels = modelsResult.recordset.map((row: any) => row.model);
+//   const allModels: string[] = modelsResult.recordset.map((r: any) => r.model);
 
 //   const allowedModels = [
 //     'EvenDistribution',
 //     'EvenVolume',
 //     'EvenVolumeDynamic',
 //     'TopFrequencies',
-//   ];
+//   ] as const;
 
-//   const currentModels: Record<string, string> = {
+//   const currentModels: Record<(typeof allowedModels)[number], string> = {
 //     EvenDistribution: 'CurrentEvenDistribution',
 //     EvenVolume: 'CurrentEvenVolume',
 //     EvenVolumeDynamic: 'CurrentEvenVolumeDynamic',
 //     TopFrequencies: 'CurrentTopFrequencies',
 //   };
 
-//   const filteredModels = allowedModels.filter(
-//     (m) => allModels.includes(m) || allModels.includes(currentModels[m])
-//   );
-
-//   const workbook = new ExcelJS.Workbook();
-
-//   for (const model of filteredModels) {
-//     const modelExists = allModels.includes(model);
-//     const currentModelName = currentModels[model];
-//     const currentModelExists = allModels.includes(currentModelName);
-
-//     // Función para procesar un modelo (optimizado o current)
-//     const processModel = async (modelName: string) => {
-//       const resultsQuery = await db.request()
-//         .input("idOrder", idOrder)
-//         .input("model", modelName)
-//         .query(`
-//           SELECT r.id, r.idOrder,
-//           r.idAttributeData,
-//           r.idShipmenDataFile,
-//           r.model,
-//           r.boxNumber,
-//           s.cubedItemLength,
-//           s.cubedItemWidth,
-//           s.cubedItemHeight,
-//           s.cubedItemWeight,
-//           s.cubingMethod,
-//           r.newAssignedBoxLength,
-//           r.newAssignedBoxWidth,
-//           r.newAssignedBoxHeight,
-//           s.currentAssignedBoxLength,
-//           s.currentAssignedBoxWidth,
-//           s.currentAssignedBoxHeight,
-//           r.currentBoxCorrugateArea,
-//           r.newBoxCorrugateArea,
-//           r.currentBoxCorrugateCost,
-//           r.newBoxCorrugateCost,
-//           r.currentDimWeight,
-//           r.newDimWeight,
-//           r.currentBillableWeight,
-//           s.orderId,
-//           r.newBillableWeight,
-//           r.currentFreightCost,
-//           r.newFreightCost,
-//           r.currentVoidVolume,
-//           r.newVoidVolume,
-//           r.currentVoidFillCost,
-//           r.newVoidFillCost
-//           FROM TB_Results r
-//           LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
-//           WHERE r.idOrder = @idOrder AND r.model = @model
-//           ORDER BY r.boxNumber, r.id
-//         `);
-
-//       const rows = resultsQuery.recordset;
-
-//       const groupedByBox: Record<string, any[]> = {};
-
-//       rows.forEach(row => {
-//         const boxKey = `${modelName}Box${row.boxNumber}`;
-//         if (!groupedByBox[boxKey]) {
-//           groupedByBox[boxKey] = [];
-//         }
-//         groupedByBox[boxKey].push(row);
-//       });
-
-//       for (const sheetName in groupedByBox) {
-//         const data = groupedByBox[sheetName];
-//         const sheet = workbook.addWorksheet(sheetName.substring(0, 31)); // Excel max 31 chars
-//         sheet.columns = Object.keys(data[0]).map(key => ({ header: key, key }));
-//         data.forEach(row => sheet.addRow(row));
-//       }
-//     };
-
-//     if (modelExists) await processModel(model);
-//     if (currentModelExists) await processModel(currentModelName);
+//   const present: string[] = [];
+//   for (const base of allowedModels) {
+//     if (allModels.includes(base)) present.push(base);
+//     const cur = currentModels[base];
+//     if (allModels.includes(cur)) present.push(cur);
 //   }
 
-//   res.setHeader(
-//     'Content-Type',
-//     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-//   );
-//   res.setHeader(
-//     'Content-Disposition',
-//     `attachment; filename=results_order_${idOrder}.xlsx`
-//   );
+//   if (present.length === 0) {
+//     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+//     res.setHeader('Content-Disposition', `attachment; filename=results_order_${idOrder}.xlsx`);
+//     const wb = new ExcelJS.Workbook();
+//     wb.addWorksheet('Empty');
+//     await wb.xlsx.write(res);
+//     res.end();
+//     return;
+//   }
 
-//   await workbook.xlsx.write(res);
-//   res.end();
+//   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+//   res.setHeader('Content-Disposition', `attachment; filename=results_order_${idOrder}.xlsx`);
+
+//   const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
+//     stream: res,
+//     useStyles: false,
+//     useSharedStrings: false,
+//   });
+
+//   type WSInfo = { ws: ExcelJS.Worksheet; columns: string[]; initialized: boolean };
+//   const sheets = new Map<string, WSInfo>();
+
+//   const getSheet = (sheetName: string, rowObj: any) => {
+//     let info = sheets.get(sheetName);
+//     if (!info) {
+//       const safeName = sheetName.substring(0, 31);
+//       const ws = workbook.addWorksheet(safeName);
+//       info = { ws, columns: Object.keys(rowObj), initialized: false };
+//       sheets.set(sheetName, info);
+//     }
+//     if (!info.initialized) {
+//       info.ws.columns = info.columns.map((key) => ({ header: key, key }));
+//       info.initialized = true;
+//     }
+//     return info.ws;
+//   };
+
+//   const req = new sql.Request(db);
+//   req.stream = true;
+//   req.input('idOrder', sql.Int, idOrder);
+//   const modelParams: string[] = [];
+//   present.forEach((m, idx) => {
+//     const name = `m${idx}`;
+//     modelParams.push(`@${name}`);
+//     req.input(name, sql.NVarChar(100), m);
+//   });
+
+//   const sqlText = `
+//     SELECT
+//       r.id, r.idOrder, r.idAttributeData, r.idShipmenDataFile, r.model, r.boxNumber,
+//       s.cubedItemLength, s.cubedItemWidth, s.cubedItemHeight, s.cubedItemWeight, s.cubingMethod,
+//       r.newAssignedBoxLength, r.newAssignedBoxWidth, r.newAssignedBoxHeight,
+//       s.currentAssignedBoxLength, s.currentAssignedBoxWidth, s.currentAssignedBoxHeight,
+//       r.currentBoxCorrugateArea, r.newBoxCorrugateArea,
+//       r.currentBoxCorrugateCost, r.newBoxCorrugateCost,
+//       r.currentDimWeight, r.newDimWeight,
+//       r.currentBillableWeight, r.newBillableWeight,
+//       r.currentFreightCost, r.newFreightCost,
+//       r.currentVoidVolume, r.newVoidVolume,
+//       r.currentVoidFillCost, r.newVoidFillCost,
+//       s.[orderId] AS shipmentOrderId
+//     FROM TB_Results r
+//     LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
+//     WHERE r.idOrder = @idOrder
+//       AND r.model IN (${modelParams.join(',')})
+//     ORDER BY r.model, r.boxNumber, r.id;
+//   `;
+
+//   req.on('row', (row: any) => {
+//     const sheetKey = `${row.model}Box${row.boxNumber}`;
+//     const ws = getSheet(sheetKey, row);
+//     ws.addRow(row).commit();
+//   });
+
+//   req.on('error', (err: any) => {
+//     try { workbook.commit(); } catch {}
+//     console.error('downloadExcelResultsByOrder stream error:', err);
+//   });
+
+//   req.on('done', async () => {
+//     for (const { ws } of sheets.values()) {
+//       (ws as any).commit?.();
+//     }
+//     await workbook.commit();
+//   });
+
+//   req.query(sqlText).catch((e) => {
+//     console.error('downloadExcelResultsByOrder query error:', e);
+//   });
 // };
 
 export const downloadExcelResultsByOrder = async (
@@ -166,18 +173,16 @@ export const downloadExcelResultsByOrder = async (
     if (allModels.includes(cur)) present.push(cur);
   }
 
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename=results_order_${idOrder}.xlsx`);
+
   if (present.length === 0) {
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=results_order_${idOrder}.xlsx`);
     const wb = new ExcelJS.Workbook();
     wb.addWorksheet('Empty');
     await wb.xlsx.write(res);
     res.end();
     return;
   }
-
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename=results_order_${idOrder}.xlsx`);
 
   const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
     stream: res,
@@ -206,6 +211,7 @@ export const downloadExcelResultsByOrder = async (
   const req = new sql.Request(db);
   req.stream = true;
   req.input('idOrder', sql.Int, idOrder);
+
   const modelParams: string[] = [];
   present.forEach((m, idx) => {
     const name = `m${idx}`;
@@ -213,19 +219,49 @@ export const downloadExcelResultsByOrder = async (
     req.input(name, sql.NVarChar(100), m);
   });
 
+  // === SELECT: incluye TODO lo original + NUEVOS campos de comparación ===
   const sqlText = `
     SELECT
+      -- Identificadores
       r.id, r.idOrder, r.idAttributeData, r.idShipmenDataFile, r.model, r.boxNumber,
+
+      -- Datos del item/shipment (para contexto)
       s.cubedItemLength, s.cubedItemWidth, s.cubedItemHeight, s.cubedItemWeight, s.cubingMethod,
-      r.newAssignedBoxLength, r.newAssignedBoxWidth, r.newAssignedBoxHeight,
       s.currentAssignedBoxLength, s.currentAssignedBoxWidth, s.currentAssignedBoxHeight,
+
+      -- Caja propuesta (real, sin ceil)
+      r.newAssignedBoxLength, r.newAssignedBoxWidth, r.newAssignedBoxHeight,
+
+      -- Corrugado (área / costo)
       r.currentBoxCorrugateArea, r.newBoxCorrugateArea,
       r.currentBoxCorrugateCost, r.newBoxCorrugateCost,
+
+      /* ******* ORIGINAL (se conserva) ******* */
+      -- Pesos DIM decimales (histórico/legacy de tu cálculo previo o raw si ya migraste)
       r.currentDimWeight, r.newDimWeight,
+
+      -- Pesos facturables legacy (se mantienen para comparar)
       r.currentBillableWeight, r.newBillableWeight,
+
+      -- Costos de flete legacy
       r.currentFreightCost, r.newFreightCost,
+
+      -- Void & Void Fill legacy
       r.currentVoidVolume, r.newVoidVolume,
       r.currentVoidFillCost, r.newVoidFillCost,
+
+      /* ******* NUEVO PARA COMPARAR ******* */
+      -- DIM "raw" (con L/W/H ceileadas, antes del ceil final del peso)
+      r.currentDimWeightRaw, r.newDimWeightRaw,
+
+      -- DIM redondeado final (ceil): el que piden UPS/FedEx
+      r.currentDimWeightRounded, r.newDimWeightRounded,
+
+      -- Aproximaciones de dimensiones usadas para DIM (L/W/H ceileadas)
+      r.currentApproxLength, r.currentApproxWidth, r.currentApproxHeight,
+      r.newApproxLength, r.newApproxWidth, r.newApproxHeight,
+
+      -- Traza de shipment
       s.[orderId] AS shipmentOrderId
     FROM TB_Results r
     LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
@@ -256,6 +292,7 @@ export const downloadExcelResultsByOrder = async (
     console.error('downloadExcelResultsByOrder query error:', e);
   });
 };
+
 export const downloadExcelSumaryDataFromResults = async (
   idOrder: number,
   res: Response
@@ -363,7 +400,7 @@ export const downloadExcelSumaryDataFromResults = async (
         .input("model", model)
         .query(`
           SELECT idOrder, model, boxNumber,
-                 SUM(CAST(newBillableWeight   AS FLOAT))            AS newBillableWeight,
+                 SUM(CAST(newDimWeightRounded   AS FLOAT))            AS newBillableWeight,
                  SUM(CAST(newFreightCost      AS FLOAT))            AS newFreightCost,
                  SUM(CAST(newVoidVolume       AS FLOAT))            AS newVoidVolume,
                  SUM(CAST(newVoidFillCost     AS FLOAT))            AS newVoidFillCost,
@@ -386,7 +423,7 @@ export const downloadExcelSumaryDataFromResults = async (
         .input("model", currentModelName)
         .query(`
           SELECT idOrder, model, boxNumber,
-                 SUM(CAST(currentBillableWeight   AS FLOAT))            AS currentBillableWeight,
+                 SUM(CAST(currentDimWeightRounded   AS FLOAT))            AS currentBillableWeight,
                  SUM(CAST(currentFreightCost      AS FLOAT))            AS currentFreightCost,
                  SUM(CAST(currentVoidVolume       AS FLOAT))            AS currentVoidVolume,
                  SUM(CAST(currentVoidFillCost     AS FLOAT))            AS currentVoidFillCost,
