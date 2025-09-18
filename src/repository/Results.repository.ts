@@ -2177,8 +2177,9 @@ export async function executeDistributionModel(
         dimWeightFactor
       );
 
-      const currentBillableWeight = Math.max(item.cubedItemWeight, currentDimWeightRounded);
-      const newBillableWeight     = Math.max(item.cubedItemWeight, newDimWeightRounded);
+const actualWeightRounded = Math.ceil(item.cubedItemWeight);
+const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
+const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
 
       const currentFreightCost = currentBillableWeight * freightCostPerLb;
       const newFreightCost     = newBillableWeight * freightCostPerLb;
@@ -2546,8 +2547,9 @@ export async function executeTopFrequenciesModel(
         dimWeightFactor
       );
 
-      const currentBillableWeight = Math.max(item.cubedItemWeight, currentDimWeightRounded);
-      const newBillableWeight     = Math.max(item.cubedItemWeight, newDimWeightRounded);
+const actualWeightRounded = Math.ceil(item.cubedItemWeight);
+const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
+const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
 
       const currentFreightCost = currentBillableWeight * freightCostPerLb;
       const newFreightCost     = newBillableWeight * freightCostPerLb;
@@ -2936,8 +2938,9 @@ export async function executeEvenVolume(
         dimWeightFactor
       );
 
-      const currentBillableWeight = safeFloat(Math.max(item.cubedItemWeight, currentDimWeightRounded));
-      const newBillableWeight     = safeFloat(Math.max(item.cubedItemWeight, newDimWeightRounded));
+const actualWeightRounded = Math.ceil(item.cubedItemWeight);
+const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
+const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
 
       const currentFreightCost = safeFloat(currentBillableWeight * freightCostPerLb);
       const newFreightCost     = safeFloat(newBillableWeight   * freightCostPerLb);
@@ -3516,8 +3519,9 @@ export async function executeEvenVolumeDinamico(
       dimWeightFactor
     );
 
-    const currentBillableWeight = safeFloat(Math.max(item.cubedItemWeight, currentDimWeightRounded));
-    const newBillableWeight     = safeFloat(Math.max(item.cubedItemWeight, newDimWeightRounded));
+const actualWeightRounded = Math.ceil(item.cubedItemWeight);
+const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
+const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
 
     const currentFreightCost = safeFloat(currentBillableWeight * freightCostPerLb);
     const newFreightCost     = safeFloat(newBillableWeight   * freightCostPerLb);

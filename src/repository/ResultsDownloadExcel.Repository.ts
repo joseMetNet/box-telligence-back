@@ -176,14 +176,6 @@ export const downloadExcelResultsByOrder = async (
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename=results_order_${idOrder}.xlsx`);
 
-  if (present.length === 0) {
-    const wb = new ExcelJS.Workbook();
-    wb.addWorksheet('Empty');
-    await wb.xlsx.write(res);
-    res.end();
-    return;
-  }
-
   const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
     stream: res,
     useStyles: false,
@@ -192,7 +184,6 @@ export const downloadExcelResultsByOrder = async (
 
   type WSInfo = { ws: ExcelJS.Worksheet; columns: string[]; initialized: boolean };
   const sheets = new Map<string, WSInfo>();
-
   const getSheet = (sheetName: string, rowObj: any) => {
     let info = sheets.get(sheetName);
     if (!info) {
@@ -208,90 +199,326 @@ export const downloadExcelResultsByOrder = async (
     return info.ws;
   };
 
-  const req = new sql.Request(db);
-  req.stream = true;
-  req.input('idOrder', sql.Int, idOrder);
+  // Si no hay modelos, devolvemos un archivo vacío
+  if (present.length === 0) {
+    const wb = new ExcelJS.Workbook();
+    wb.addWorksheet('Empty');
+    await wb.xlsx.write(res);
+    res.end();
+    return;
+  }
 
-  const modelParams: string[] = [];
-  present.forEach((m, idx) => {
-    const name = `m${idx}`;
-    modelParams.push(`@${name}`);
-    req.input(name, sql.NVarChar(100), m);
-  });
+  // ---------- Hoja principal (solo filas con shipment válido) ----------
+  {
+    const req = new sql.Request(db);
+    req.stream = true;
+    req.input('idOrder', sql.Int, idOrder);
 
-  // === SELECT: incluye TODO lo original + NUEVOS campos de comparación ===
-  const sqlText = `
-    SELECT
-      -- Identificadores
-      r.id, r.idOrder, r.idAttributeData, r.idShipmenDataFile, r.model, r.boxNumber,
+    const modelParams: string[] = [];
+    present.forEach((m, idx) => {
+      const name = `m${idx}`;
+      modelParams.push(`@${name}`);
+      req.input(name, sql.NVarChar(100), m);
+    });
 
-      -- Datos del item/shipment (para contexto)
-      s.cubedItemLength, s.cubedItemWidth, s.cubedItemHeight, s.cubedItemWeight, s.cubingMethod,
-      s.currentAssignedBoxLength, s.currentAssignedBoxWidth, s.currentAssignedBoxHeight,
+    // OJO: columnas V/W/X/Y ahora se fuerzan a enteros
+    const sqlText = `
+      SELECT
+        -- Identificadores
+        r.id, r.idOrder, r.idAttributeData, r.idShipmenDataFile, r.model, r.boxNumber,
 
-      -- Caja propuesta (real, sin ceil)
-      r.newAssignedBoxLength, r.newAssignedBoxWidth, r.newAssignedBoxHeight,
+        -- Datos del item/shipment
+        s.cubedItemLength, s.cubedItemWidth, s.cubedItemHeight, s.cubedItemWeight, s.cubingMethod,
+        s.currentAssignedBoxLength, s.currentAssignedBoxWidth, s.currentAssignedBoxHeight,
 
-      -- Corrugado (área / costo)
-      r.currentBoxCorrugateArea, r.newBoxCorrugateArea,
-      r.currentBoxCorrugateCost, r.newBoxCorrugateCost,
+        -- Caja propuesta (real, sin ceil)
+        r.newAssignedBoxLength, r.newAssignedBoxWidth, r.newAssignedBoxHeight,
 
-      /* ******* ORIGINAL (se conserva) ******* */
-      -- Pesos DIM decimales (histórico/legacy de tu cálculo previo o raw si ya migraste)
-      r.currentDimWeight, r.newDimWeight,
+        -- Corrugado
+        r.currentBoxCorrugateArea, r.newBoxCorrugateArea,
+        r.currentBoxCorrugateCost, r.newBoxCorrugateCost,
 
-      -- Pesos facturables legacy (se mantienen para comparar)
-      r.currentBillableWeight, r.newBillableWeight,
+        /* ******* FORZAMOS ENTEROS EN V/W/X/Y ******* */
+        CAST(r.currentDimWeightRounded AS INT) AS currentDimWeight,     -- V
+        CAST(r.newDimWeightRounded     AS INT) AS newDimWeight,         -- W
 
-      -- Costos de flete legacy
-      r.currentFreightCost, r.newFreightCost,
+        -- X/Y: billable = max( ceil(actual), DIM_rounded )
+        CASE
+          WHEN CEILING(COALESCE(s.cubedItemWeight, 0)) > r.currentDimWeightRounded
+          THEN CEILING(COALESCE(s.cubedItemWeight, 0))
+          ELSE r.currentDimWeightRounded
+        END AS currentBillableWeight,                                   -- X
+        CASE
+          WHEN CEILING(COALESCE(s.cubedItemWeight, 0)) > r.newDimWeightRounded
+          THEN CEILING(COALESCE(s.cubedItemWeight, 0))
+          ELSE r.newDimWeightRounded
+        END AS newBillableWeight,                                       -- Y
 
-      -- Void & Void Fill legacy
-      r.currentVoidVolume, r.newVoidVolume,
-      r.currentVoidFillCost, r.newVoidFillCost,
+        -- Costos (calculados originalmente con billable); los dejamos igual
+        r.currentFreightCost, r.newFreightCost,
 
-      /* ******* NUEVO PARA COMPARAR ******* */
-      -- DIM "raw" (con L/W/H ceileadas, antes del ceil final del peso)
-      r.currentDimWeightRaw, r.newDimWeightRaw,
+        -- Void & Void Fill
+        r.currentVoidVolume, r.newVoidVolume,
+        r.currentVoidFillCost, r.newVoidFillCost,
 
-      -- DIM redondeado final (ceil): el que piden UPS/FedEx
-      r.currentDimWeightRounded, r.newDimWeightRounded,
+        /* ******* CAMPOS PARA COMPARAR ******* */
+        -- Raw = (ceil L * ceil W * ceil H)/factor, antes del último ceil
+        r.currentDimWeightRaw, r.newDimWeightRaw,
 
-      -- Aproximaciones de dimensiones usadas para DIM (L/W/H ceileadas)
-      r.currentApproxLength, r.currentApproxWidth, r.currentApproxHeight,
-      r.newApproxLength, r.newApproxWidth, r.newApproxHeight,
+        -- Redondeados finales (por si también los quieres ver explícitos)
+        r.currentDimWeightRounded, r.newDimWeightRounded,
 
-      -- Traza de shipment
-      s.[orderId] AS shipmentOrderId
-    FROM TB_Results r
-    LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
-    WHERE r.idOrder = @idOrder
-      AND r.model IN (${modelParams.join(',')})
-    ORDER BY r.model, r.boxNumber, r.id;
-  `;
+        -- Aproximaciones (L/W/H ceileadas)
+        r.currentApproxLength, r.currentApproxWidth, r.currentApproxHeight,
+        r.newApproxLength,     r.newApproxWidth,     r.newApproxHeight,
 
-  req.on('row', (row: any) => {
-    const sheetKey = `${row.model}Box${row.boxNumber}`;
-    const ws = getSheet(sheetKey, row);
-    ws.addRow(row).commit();
-  });
+        -- Traza de shipment
+        s.[orderId] AS shipmentOrderId
+      FROM TB_Results r
+      LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
+      WHERE r.idOrder = @idOrder
+        AND r.model IN (${modelParams.join(',')})
+        AND s.id IS NOT NULL                       -- << filtra filas basura
+      ORDER BY r.model, r.boxNumber, r.id;
+    `;
 
-  req.on('error', (err: any) => {
-    try { workbook.commit(); } catch {}
-    console.error('downloadExcelResultsByOrder stream error:', err);
-  });
+    req.on('row', (row: any) => {
+      const sheetKey = `${row.model}Box${row.boxNumber}`;
+      const ws = getSheet(sheetKey, row);
+      ws.addRow(row).commit();
+    });
 
-  req.on('done', async () => {
-    for (const { ws } of sheets.values()) {
-      (ws as any).commit?.();
-    }
-    await workbook.commit();
-  });
+    req.on('error', (err: any) => {
+      try { workbook.commit(); } catch {}
+      console.error('downloadExcelResultsByOrder stream error:', err);
+    });
 
-  req.query(sqlText).catch((e) => {
-    console.error('downloadExcelResultsByOrder query error:', e);
-  });
+    // Cuando termine esta query, lanzamos la hoja de errores
+    req.on('done', async () => {
+      // ---------- Hoja de errores: resultados huérfanos (s.id IS NULL) ----------
+      try {
+        const errReq = new sql.Request(db);
+        errReq.stream = true;
+        errReq.input('idOrder', sql.Int, idOrder);
+        present.forEach((m, idx) => {
+          const name = `em${idx}`;
+          errReq.input(name, sql.NVarChar(100), m);
+        });
+
+        const errSql = `
+          SELECT
+            r.id              AS resultId,
+            r.idOrder,
+            r.model,
+            r.boxNumber,
+            r.idShipmenDataFile,
+            'Missing shipment row (no match in TB_ShipmentDataFile)' AS errorReason
+          FROM TB_Results r
+          LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
+          WHERE r.idOrder = @idOrder
+            AND r.model IN (${present.map((_, i) => `@em${i}`).join(',')})
+            AND s.id IS NULL
+          ORDER BY r.model, r.boxNumber, r.id;
+        `;
+
+        let started = false;
+        let errWs: ExcelJS.Worksheet | null = null;
+        errReq.on('row', (row: any) => {
+          if (!started) {
+            started = true;
+            errWs = getSheet('Errors', row);
+          }
+          errWs!.addRow(row).commit();
+        });
+
+        errReq.on('error', (e: any) => {
+          console.error('downloadExcelResultsByOrder errors stream error:', e);
+        });
+
+        errReq.on('done', async () => {
+          // Cierra hojas y archivo
+          for (const { ws } of sheets.values()) {
+            (ws as any).commit?.();
+          }
+          await workbook.commit();
+        });
+
+        errReq.query(errSql).catch((e) => {
+          console.error('downloadExcelResultsByOrder errors query error:', e);
+        });
+      } catch (e) {
+        console.error('downloadExcelResultsByOrder errors setup error:', e);
+        for (const { ws } of sheets.values()) {
+          (ws as any).commit?.();
+        }
+        await workbook.commit();
+      }
+    });
+
+    req.query(sqlText).catch((e) => {
+      console.error('downloadExcelResultsByOrder query error:', e);
+    });
+  }
 };
+
+// export const downloadExcelResultsByOrder = async (
+//   idOrder: number,
+//   res: Response
+// ) => {
+//   const db = await connectToSqlServer();
+//   if (!db) throw new Error('No se pudo conectar a la base de datos');
+
+//   const modelsResult = await db
+//     .request()
+//     .input('idOrder', idOrder)
+//     .query(`
+//       SELECT DISTINCT model
+//       FROM TB_Results
+//       WHERE idOrder = @idOrder
+//     `);
+
+//   const allModels: string[] = modelsResult.recordset.map((r: any) => r.model);
+
+//   const allowedModels = [
+//     'EvenDistribution',
+//     'EvenVolume',
+//     'EvenVolumeDynamic',
+//     'TopFrequencies',
+//   ] as const;
+
+//   const currentModels: Record<(typeof allowedModels)[number], string> = {
+//     EvenDistribution: 'CurrentEvenDistribution',
+//     EvenVolume: 'CurrentEvenVolume',
+//     EvenVolumeDynamic: 'CurrentEvenVolumeDynamic',
+//     TopFrequencies: 'CurrentTopFrequencies',
+//   };
+
+//   const present: string[] = [];
+//   for (const base of allowedModels) {
+//     if (allModels.includes(base)) present.push(base);
+//     const cur = currentModels[base];
+//     if (allModels.includes(cur)) present.push(cur);
+//   }
+
+//   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+//   res.setHeader('Content-Disposition', `attachment; filename=results_order_${idOrder}.xlsx`);
+
+//   if (present.length === 0) {
+//     const wb = new ExcelJS.Workbook();
+//     wb.addWorksheet('Empty');
+//     await wb.xlsx.write(res);
+//     res.end();
+//     return;
+//   }
+
+//   const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
+//     stream: res,
+//     useStyles: false,
+//     useSharedStrings: false,
+//   });
+
+//   type WSInfo = { ws: ExcelJS.Worksheet; columns: string[]; initialized: boolean };
+//   const sheets = new Map<string, WSInfo>();
+
+//   const getSheet = (sheetName: string, rowObj: any) => {
+//     let info = sheets.get(sheetName);
+//     if (!info) {
+//       const safeName = sheetName.substring(0, 31);
+//       const ws = workbook.addWorksheet(safeName);
+//       info = { ws, columns: Object.keys(rowObj), initialized: false };
+//       sheets.set(sheetName, info);
+//     }
+//     if (!info.initialized) {
+//       info.ws.columns = info.columns.map((key) => ({ header: key, key }));
+//       info.initialized = true;
+//     }
+//     return info.ws;
+//   };
+
+//   const req = new sql.Request(db);
+//   req.stream = true;
+//   req.input('idOrder', sql.Int, idOrder);
+
+//   const modelParams: string[] = [];
+//   present.forEach((m, idx) => {
+//     const name = `m${idx}`;
+//     modelParams.push(`@${name}`);
+//     req.input(name, sql.NVarChar(100), m);
+//   });
+
+//   // === SELECT: incluye TODO lo original + NUEVOS campos de comparación ===
+//   const sqlText = `
+//     SELECT
+//       -- Identificadores
+//       r.id, r.idOrder, r.idAttributeData, r.idShipmenDataFile, r.model, r.boxNumber,
+
+//       -- Datos del item/shipment (para contexto)
+//       s.cubedItemLength, s.cubedItemWidth, s.cubedItemHeight, s.cubedItemWeight, s.cubingMethod,
+//       s.currentAssignedBoxLength, s.currentAssignedBoxWidth, s.currentAssignedBoxHeight,
+
+//       -- Caja propuesta (real, sin ceil)
+//       r.newAssignedBoxLength, r.newAssignedBoxWidth, r.newAssignedBoxHeight,
+
+//       -- Corrugado (área / costo)
+//       r.currentBoxCorrugateArea, r.newBoxCorrugateArea,
+//       r.currentBoxCorrugateCost, r.newBoxCorrugateCost,
+
+//       /* ******* ORIGINAL (se conserva) ******* */
+//       -- Pesos DIM decimales (histórico/legacy de tu cálculo previo o raw si ya migraste)
+//       r.currentDimWeight, r.newDimWeight,
+
+//       -- Pesos facturables legacy (se mantienen para comparar)
+//       r.currentBillableWeight, r.newBillableWeight,
+
+//       -- Costos de flete legacy
+//       r.currentFreightCost, r.newFreightCost,
+
+//       -- Void & Void Fill legacy
+//       r.currentVoidVolume, r.newVoidVolume,
+//       r.currentVoidFillCost, r.newVoidFillCost,
+
+//       /* ******* NUEVO PARA COMPARAR ******* */
+//       -- DIM "raw" (con L/W/H ceileadas, antes del ceil final del peso)
+//       r.currentDimWeightRaw, r.newDimWeightRaw,
+
+//       -- DIM redondeado final (ceil): el que piden UPS/FedEx
+//       r.currentDimWeightRounded, r.newDimWeightRounded,
+
+//       -- Aproximaciones de dimensiones usadas para DIM (L/W/H ceileadas)
+//       r.currentApproxLength, r.currentApproxWidth, r.currentApproxHeight,
+//       r.newApproxLength, r.newApproxWidth, r.newApproxHeight,
+
+//       -- Traza de shipment
+//       s.[orderId] AS shipmentOrderId
+//     FROM TB_Results r
+//     LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
+//     WHERE r.idOrder = @idOrder
+//       AND r.model IN (${modelParams.join(',')})
+//     ORDER BY r.model, r.boxNumber, r.id;
+//   `;
+
+//   req.on('row', (row: any) => {
+//     const sheetKey = `${row.model}Box${row.boxNumber}`;
+//     const ws = getSheet(sheetKey, row);
+//     ws.addRow(row).commit();
+//   });
+
+//   req.on('error', (err: any) => {
+//     try { workbook.commit(); } catch {}
+//     console.error('downloadExcelResultsByOrder stream error:', err);
+//   });
+
+//   req.on('done', async () => {
+//     for (const { ws } of sheets.values()) {
+//       (ws as any).commit?.();
+//     }
+//     await workbook.commit();
+//   });
+
+//   req.query(sqlText).catch((e) => {
+//     console.error('downloadExcelResultsByOrder query error:', e);
+//   });
+// };
 
 export const downloadExcelSumaryDataFromResults = async (
   idOrder: number,
