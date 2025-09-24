@@ -1,6 +1,6 @@
 import { connectToSqlServer } from "../DB/config";
 import { computeRoundedDimWeight } from "../helpers/documents.Helper";
-import { ShipmentItem, IResultsPaginated, IResult, Boundary } from "../interface/Results.Interface";
+import { ShipmentItem, IResultsPaginated, IResult, Boundary, DistOptions } from "../interface/Results.Interface";
 import _ from 'lodash';
 import * as sql from 'mssql';
 
@@ -653,6 +653,61 @@ export const getModelImprovementByIdOrder = async (
   return improvements;
 };
 
+// export const getBoxDimensionsByOrderAndModel = async (
+//   idOrder: number,
+//   model:
+//     | "EvenDistribution"
+//     | "TopFrequencies"
+//     | "EvenVolumeDynamic"
+//     | "EvenVolume",
+//   numBoxes?: number
+// ) => {
+//   const db = await connectToSqlServer();
+
+//   const numBoxesCondition = numBoxes !== undefined ? " AND numBoxes = @numBoxes" : "";
+
+//   let request = db?.request()
+//     .input("idOrder", idOrder)
+//     .input("model", model);
+
+//   if (numBoxes !== undefined) {
+//     request?.input("numBoxes", numBoxes);
+//   }
+
+//   let result = await request?.query(`
+//     SELECT DISTINCT boxLabel, model, boxNumber,
+//       CAST(boxLength AS FLOAT) AS boxLength,
+//       CAST(boxWidth AS FLOAT) AS boxWidth,
+//       CAST(boxHeight AS FLOAT) AS boxHeight
+//     FROM TB_KitBoxes
+//     WHERE idOrder = @idOrder AND model = @model${numBoxesCondition}
+//     ORDER BY boxLength DESC, boxWidth DESC, boxHeight DESC
+//   `);
+
+//   if (!result?.recordset?.length) {
+//     const currentModel = `Current${model}`;
+//     let currentRequest = db?.request()
+//       .input("idOrder", idOrder)
+//       .input("model", currentModel);
+
+//     if (numBoxes !== undefined) {
+//       currentRequest?.input("numBoxes", numBoxes);
+//     }
+
+//     result = await currentRequest?.query(`
+//       SELECT DISTINCT boxLabel, model, boxNumber,
+//         CAST(boxLength AS FLOAT) AS boxLength,
+//         CAST(boxWidth AS FLOAT) AS boxWidth,
+//         CAST(boxHeight AS FLOAT) AS boxHeight
+//       FROM TB_KitBoxes
+//       WHERE idOrder = @idOrder AND model = @model${numBoxesCondition}
+//       ORDER BY boxLength DESC, boxWidth DESC, boxHeight DESC
+//     `);
+//   }
+
+//   return result?.recordset || [];
+// };
+
 export const getBoxDimensionsByOrderAndModel = async (
   idOrder: number,
   model:
@@ -663,49 +718,53 @@ export const getBoxDimensionsByOrderAndModel = async (
   numBoxes?: number
 ) => {
   const db = await connectToSqlServer();
+  if (!db) return [];
 
   const numBoxesCondition = numBoxes !== undefined ? " AND numBoxes = @numBoxes" : "";
 
-  let request = db?.request()
+  let request = db.request()
     .input("idOrder", idOrder)
     .input("model", model);
 
-  if (numBoxes !== undefined) {
-    request?.input("numBoxes", numBoxes);
-  }
+  if (numBoxes !== undefined) request.input("numBoxes", numBoxes);
 
-  let result = await request?.query(`
-    SELECT DISTINCT boxLabel, model, boxNumber,
+  let result = await request.query(`
+    SELECT DISTINCT
+      boxLabel,
+      model,
+      boxNumber,
+      CAST(boxLength AS FLOAT)  AS boxLength,
+      CAST(boxWidth  AS FLOAT)  AS boxWidth,
+      CAST(boxHeight AS FLOAT)  AS boxHeight
+    FROM TB_KitBoxes
+    WHERE idOrder = @idOrder AND model = @model${numBoxesCondition}
+    ORDER BY boxLength DESC, boxWidth DESC, boxHeight DESC;
+  `);
+
+  if (result?.recordset?.length) return result.recordset;
+
+  const currentModel = `Current${model}`;
+
+  let currentRequest = db.request()
+    .input("idOrder", idOrder)
+    .input("model", currentModel);
+
+  if (numBoxes !== undefined) currentRequest.input("numBoxes", numBoxes);
+
+  const currentResult = await currentRequest.query(`
+    SELECT DISTINCT
+      boxLabel,
+      model,
+      boxNumber,
       CAST(boxLength AS FLOAT) AS boxLength,
-      CAST(boxWidth AS FLOAT) AS boxWidth,
+      CAST(boxWidth  AS FLOAT) AS boxWidth,
       CAST(boxHeight AS FLOAT) AS boxHeight
     FROM TB_KitBoxes
     WHERE idOrder = @idOrder AND model = @model${numBoxesCondition}
-    ORDER BY boxLength DESC, boxWidth DESC, boxHeight DESC
+    ORDER BY boxLength DESC, boxWidth DESC, boxHeight DESC;
   `);
 
-  if (!result?.recordset?.length) {
-    const currentModel = `Current${model}`;
-    let currentRequest = db?.request()
-      .input("idOrder", idOrder)
-      .input("model", currentModel);
-
-    if (numBoxes !== undefined) {
-      currentRequest?.input("numBoxes", numBoxes);
-    }
-
-    result = await currentRequest?.query(`
-      SELECT DISTINCT boxLabel, model, boxNumber,
-        CAST(boxLength AS FLOAT) AS boxLength,
-        CAST(boxWidth AS FLOAT) AS boxWidth,
-        CAST(boxHeight AS FLOAT) AS boxHeight
-      FROM TB_KitBoxes
-      WHERE idOrder = @idOrder AND model = @model${numBoxesCondition}
-      ORDER BY boxLength DESC, boxWidth DESC, boxHeight DESC
-    `);
-  }
-
-  return result?.recordset || [];
+  return currentResult?.recordset || [];
 };
 
 export function applyAABBHeuristic(row: any): ShipmentItem[] {
@@ -2023,10 +2082,9 @@ export const runEvenDistributionModel = async (idOrder: number) => {
   }
 
   const row = shipmentResult.recordset[0];
-
   const isNormalized =
     row.cubedItemLength > 0 &&
-    row.cubedItemWidth > 0 &&
+    row.cubedItemWidth  > 0 &&
     row.cubedItemHeight > 0 &&
     row.cubedItemWeight > 0;
 
@@ -2046,13 +2104,13 @@ export const runEvenDistributionModel = async (idOrder: number) => {
 
   const attrData = attrDataResult.recordset[0];
 
-  const runCurrentBoxKitOnly = Number(attrData.runCurrentBoxKitOnly);
-  const currentBoxUsed = Number(attrData.currentBoxUsed) || 0;
+  const runCurrentBoxKitOnly  = Number(attrData.runCurrentBoxKitOnly);
+  const currentBoxUsed        = Number(attrData.currentBoxUsed) || 0;
 
-  const dimWeightFactor   = attrData.dimWeightFactor;
-  const packMaterialCost  = attrData.packMaterialCost;
-  const corrugateCostPerSf= attrData.corrugateCost;
-  const freightCostPerLb  = attrData.freightCostPerLb;
+  const dimWeightFactor    = attrData.dimWeightFactor;
+  const packMaterialCost   = attrData.packMaterialCost;
+  const corrugateCostPerSf = attrData.corrugateCost;
+  const freightCostPerLb   = attrData.freightCostPerLb;
 
   const minBoxes = Number(attrData.minimunNumBox);
   const maxBoxes = Number(attrData.maximunNumBox);
@@ -2061,20 +2119,14 @@ export const runEvenDistributionModel = async (idOrder: number) => {
 
   if (runCurrentBoxKitOnly === 0) {
     const boxRange = Array.from({ length: maxBoxes - minBoxes + 1 }, (_, i) => minBoxes + i);
-
     for (const numBoxes of boxRange) {
       jobs.push(
         executeDistributionModel(
-          db,
-          items,
-          attrData,
-          idOrder,
-          numBoxes,
-          dimWeightFactor,
-          packMaterialCost,
-          corrugateCostPerSf,
-          freightCostPerLb,
-          "EvenDistribution"
+          db, items, attrData, idOrder, numBoxes,
+          dimWeightFactor, packMaterialCost, corrugateCostPerSf, freightCostPerLb,
+          "EvenDistribution",
+          undefined, undefined, undefined,
+          { useKitFromTable: false }              
         )
       );
     }
@@ -2082,46 +2134,34 @@ export const runEvenDistributionModel = async (idOrder: number) => {
     if (currentBoxUsed > 0) {
       jobs.push(
         executeDistributionModel(
-          db,
-          items,
-          attrData,
-          idOrder,
-          currentBoxUsed,
-          dimWeightFactor,
-          packMaterialCost,
-          corrugateCostPerSf,
-          freightCostPerLb,
-          "CurrentEvenDistribution"
+          db, items, attrData, idOrder, currentBoxUsed,
+          dimWeightFactor, packMaterialCost, corrugateCostPerSf, freightCostPerLb,
+          "CurrentEvenDistribution",
+          undefined, undefined, undefined,
+          { useKitFromTable: true }               
         )
       );
     }
   } else {
+
     if (currentBoxUsed <= 0) {
       throw new Error("Attribute 'currentBoxUsed' must be > 0 when runCurrentBoxKitOnly = 1");
     }
 
     jobs.push(
       executeDistributionModel(
-        db,
-        items,
-        attrData,
-        idOrder,
-        currentBoxUsed,
-        dimWeightFactor,
-        packMaterialCost,
-        corrugateCostPerSf,
-        freightCostPerLb,
-        "CurrentEvenDistribution"
+        db, items, attrData, idOrder, currentBoxUsed,
+        dimWeightFactor, packMaterialCost, corrugateCostPerSf, freightCostPerLb,
+        "CurrentEvenDistribution",
+        undefined, undefined, undefined,
+        { useKitFromTable: true }                 
       )
     );
   }
 
   await Promise.all(jobs);
 
-  return {
-    success: true,
-    message: "Even Distribution model completed successfully (sin BoxKit)."
-  };
+  return { success: true, message: "Even Distribution model completed successfully." };
 };
 
 // export async function executeDistributionModel(
@@ -2251,9 +2291,161 @@ export async function executeDistributionModel(
   modelName: string,
   fixedBoxLength?: number,
   fixedBoxWidth?: number,
-  fixedBoxHeight?: number
+  fixedBoxHeight?: number,
+  options: DistOptions = {}
 ) {
   if (!items.length) throw new Error("No items to process for distribution");
+  const useKitFromTable = !!options.useKitFromTable;
+
+  const safeFloat = (n: any) => Number.isFinite(+n) ? +n : 0;
+
+  const kitBoxTvp = makeKitBoxTVP();
+  const resultTvp = makeResultTVP();
+
+  if (useKitFromTable) {
+    const kitRs = await db.request()
+      .input('idOrder', idOrder)
+      .query(`
+        SELECT boxNumber, length AS boxLength, width AS boxWidth, height AS boxHeight
+        FROM TB_BoxKitFile
+        WHERE idOrder = @idOrder
+        ORDER BY boxNumber
+      `);
+
+    const kit = (kitRs.recordset || []).map((r: any) => ({
+      boxNumber: Number(r.boxNumber) || 0,
+      boxLength: safeFloat(r.boxLength),
+      boxWidth:  safeFloat(r.boxWidth),
+      boxHeight: safeFloat(r.boxHeight),
+    }));
+
+    if (!kit.length) {
+      throw new Error("No BoxKit found in TB_BoxKitFile for this order (required for Current* models).");
+    }
+
+    for (const k of kit) {
+      const { approxL, approxW, approxH } =
+        computeRoundedDimWeight(k.boxLength, k.boxWidth, k.boxHeight, dimWeightFactor);
+
+      kitBoxTvp.rows.add(
+        idOrder,
+        `Box ${k.boxNumber}`,
+        k.boxNumber,                 
+        k.boxLength, k.boxWidth, k.boxHeight,
+        0, 0,
+        modelName,
+        kit.length,                  
+        approxL, approxW, approxH
+      );
+    }
+
+    const kitSorted = [...kit].sort((a,b) =>
+      (a.boxLength*a.boxWidth*a.boxHeight) - (b.boxLength*b.boxWidth*b.boxHeight)
+    );
+
+    const pickKitForItem = (it: ShipmentItem) => {
+      const L = safeFloat(it.cubedItemLength);
+      const W = safeFloat(it.cubedItemWidth);
+      const H = safeFloat(it.cubedItemHeight);
+      const fit = kitSorted.find(k =>
+        k.boxLength >= L && k.boxWidth >= W && k.boxHeight >= H
+      );
+      return fit ?? kitSorted[kitSorted.length - 1];
+    };
+
+    for (const item of items) {
+      const k = pickKitForItem(item);
+      const boxLength = k.boxLength;
+      const boxWidth  = k.boxWidth;
+      const boxHeight = k.boxHeight;
+
+      const itemVolume        = safeFloat(item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight);
+      const currentBoxVolume  = safeFloat(item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight);
+      const newBoxVolume      = safeFloat(boxLength * boxWidth * boxHeight);
+
+      const currentArea = safeFloat(
+        2 * item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
+        2 * item.currentAssignedBoxWidth  * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth)
+      );
+      const newArea = safeFloat(
+        2 * boxLength * (boxWidth + boxHeight) +
+        2 * boxWidth  * (boxHeight + boxWidth)
+      );
+
+      const currentCorrugateCost = safeFloat((currentArea / 144) * corrugateCostPerSf);
+      const newCorrugateCost     = safeFloat((newArea  / 144) * corrugateCostPerSf);
+
+      const {
+        dimWeightLb: currentDimWeightRounded,
+        approxL: currApproxLength,
+        approxW: currApproxWidth,
+        approxH: currApproxHeight,
+        raw: currentDimWeightRaw
+      } = computeRoundedDimWeight(
+        item.currentAssignedBoxLength,
+        item.currentAssignedBoxWidth,
+        item.currentAssignedBoxHeight,
+        dimWeightFactor
+      );
+
+      const {
+        dimWeightLb: newDimWeightRounded,
+        approxL: newApproxLength,
+        approxW: newApproxWidth,
+        approxH: newApproxHeight,
+        raw: newDimWeightRaw
+      } = computeRoundedDimWeight(
+        boxLength, boxWidth, boxHeight, dimWeightFactor
+      );
+
+      const actualWeightRounded   = Math.ceil(item.cubedItemWeight);
+      const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
+      const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
+
+      const currentFreightCost = safeFloat(currentBillableWeight * freightCostPerLb);
+      const newFreightCost     = safeFloat(newBillableWeight   * freightCostPerLb);
+
+      const currentVoidVolume = safeFloat((currentBoxVolume - itemVolume) / 1728);
+      const newVoidVolume     = safeFloat((newBoxVolume     - itemVolume) / 1728);
+
+      const currentVoidFillCost = safeFloat(currentVoidVolume * packMaterialCost);
+      const newVoidFillCost     = safeFloat(newVoidVolume   * packMaterialCost);
+
+      resultTvp.rows.add(
+        idOrder,
+        attrData.id,
+        item.id,
+        modelName,
+        kit.length,                        
+
+        boxLength, boxWidth, boxHeight,
+
+        currentArea, newArea,
+        currentCorrugateCost, newCorrugateCost,
+
+        currentDimWeightRaw, newDimWeightRaw,
+
+        currentBillableWeight, newBillableWeight,
+        currentFreightCost, newFreightCost,
+
+        currentVoidVolume, newVoidVolume,
+        currentVoidFillCost, newVoidFillCost,
+
+        currentDimWeightRounded, newDimWeightRounded,
+
+        currApproxLength, currApproxWidth, currApproxHeight,
+        newApproxLength,  newApproxWidth,  newApproxHeight,
+
+        currentDimWeightRaw, newDimWeightRaw
+      );
+    }
+
+    const req = new sql.Request(db);
+    req.input('KitBoxes', kitBoxTvp);
+    req.input('Results',  resultTvp);
+    await req.execute('usp_EvenDistribution_BulkInsert_V2');
+    return;
+  }
 
   const totalRows = items.length;
   const realBoundaries: { start: number; end: number }[] = [];
@@ -2279,9 +2471,6 @@ export async function executeDistributionModel(
     }
   }
 
-  const kitBoxTvp = makeKitBoxTVP();
-  const resultTvp = makeResultTVP();
-
   for (let i = 0; i < realBoundaries.length; i++) {
     const b = realBoundaries[i];
     const segmentItems = items.slice(b.start, b.end + 1);
@@ -2300,32 +2489,29 @@ export async function executeDistributionModel(
       idOrder,
       `Box ${i + 1}`,
       numBoxes,
-      boxLength,
-      boxWidth,
-      boxHeight,
-      fromRow,
-      toRow,
+      boxLength, boxWidth, boxHeight,
+      fromRow, toRow,
       modelName,
       numBoxes,
-      approxBoxLength,
-      approxBoxWidth,
-      approxBoxHeight
+      approxBoxLength, approxBoxWidth, approxBoxHeight
     );
 
     for (const item of segmentItems) {
-      const itemVolume        = item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight;
-      const currentBoxVolume  = item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight;
-      const newBoxVolume      = boxLength * boxWidth * boxHeight;
+      const itemVolume        = safeFloat(item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight);
+      const currentBoxVolume  = safeFloat(item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight);
+      const newBoxVolume      = safeFloat(boxLength * boxWidth * boxHeight);
 
-      const currentArea =
-        2 * (item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight)) +
-        2 * (item.currentAssignedBoxWidth  * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth));
-      const newArea =
-        2 * (boxLength * (boxWidth + boxHeight)) +
-        2 * (boxWidth  * (boxHeight + boxWidth));
+      const currentArea = safeFloat(
+        2 * item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
+        2 * item.currentAssignedBoxWidth  * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth)
+      );
+      const newArea = safeFloat(
+        2 * boxLength * (boxWidth + boxHeight) +
+        2 * boxWidth  * (boxHeight + boxWidth)
+      );
 
-      const currentCorrugateCost = (currentArea / 144) * corrugateCostPerSf;
-      const newCorrugateCost     = (newArea   / 144) * corrugateCostPerSf;
+      const currentCorrugateCost = safeFloat((currentArea / 144) * corrugateCostPerSf);
+      const newCorrugateCost     = safeFloat((newArea  / 144) * corrugateCostPerSf);
 
       const {
         dimWeightLb: currentDimWeightRounded,
@@ -2347,50 +2533,35 @@ export async function executeDistributionModel(
         approxH: newApproxHeight,
         raw: newDimWeightRaw
       } = computeRoundedDimWeight(
-        boxLength,
-        boxWidth,
-        boxHeight,
-        dimWeightFactor
+        boxLength, boxWidth, boxHeight, dimWeightFactor
       );
 
       const actualWeightRounded   = Math.ceil(item.cubedItemWeight);
       const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
       const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
 
-      const currentFreightCost = currentBillableWeight * freightCostPerLb;
-      const newFreightCost     = newBillableWeight     * freightCostPerLb;
+      const currentFreightCost = safeFloat(currentBillableWeight * freightCostPerLb);
+      const newFreightCost     = safeFloat(newBillableWeight   * freightCostPerLb);
 
-      const currentVoidVolume = (currentBoxVolume - itemVolume) / 1728;
-      const newVoidVolume     = (newBoxVolume     - itemVolume) / 1728;
+      const currentVoidVolume = safeFloat((currentBoxVolume - itemVolume) / 1728);
+      const newVoidVolume     = safeFloat((newBoxVolume     - itemVolume) / 1728);
 
-      const currentVoidFillCost = currentVoidVolume * packMaterialCost;
-      const newVoidFillCost     = newVoidVolume   * packMaterialCost;
+      const currentVoidFillCost = safeFloat(currentVoidVolume * packMaterialCost);
+      const newVoidFillCost     = safeFloat(newVoidVolume   * packMaterialCost);
 
       resultTvp.rows.add(
-        idOrder,                 
-        attrData.id,             
-        item.id,                 
-        modelName,               
-        numBoxes,                
-
+        idOrder, attrData.id, item.id, modelName, numBoxes,
         boxLength, boxWidth, boxHeight,
-
         currentArea, newArea,
         currentCorrugateCost, newCorrugateCost,
-
         currentDimWeightRaw, newDimWeightRaw,
-
         currentBillableWeight, newBillableWeight,
-        currentFreightCost,    newFreightCost,
-
+        currentFreightCost, newFreightCost,
         currentVoidVolume, newVoidVolume,
         currentVoidFillCost, newVoidFillCost,
-
         currentDimWeightRounded, newDimWeightRounded,
-
         currApproxLength, currApproxWidth, currApproxHeight,
         newApproxLength,  newApproxWidth,  newApproxHeight,
-
         currentDimWeightRaw, newDimWeightRaw
       );
     }
@@ -2435,13 +2606,15 @@ export const runTopFrequenciesModel = async (idOrder: number) => {
   const attrDataResult = await db.request()
     .input("idOrder", idOrder)
     .query(`SELECT * FROM TB_AttributeData WHERE idOrder = @idOrder`);
-  if (!attrDataResult?.recordset?.length)
+
+  if (!attrDataResult?.recordset?.length) {
     throw new Error("No attribute data found for this order");
+  }
 
   const attrData = attrDataResult.recordset[0];
 
-  const runCurrentBoxKitOnly = Number(attrData.runCurrentBoxKitOnly);
-  const currentBoxUsed = Number(attrData.currentBoxUsed) || 0;
+  const runCurrentBoxKitOnly  = Number(attrData.runCurrentBoxKitOnly);
+  const currentBoxUsed        = Number(attrData.currentBoxUsed) || 0;
 
   const dimWeightFactor    = attrData.dimWeightFactor;
   const packMaterialCost   = attrData.packMaterialCost;
@@ -2455,20 +2628,13 @@ export const runTopFrequenciesModel = async (idOrder: number) => {
 
   if (runCurrentBoxKitOnly === 0) {
     const boxRange = Array.from({ length: maxBoxes - minBoxes + 1 }, (_, i) => minBoxes + i);
-
     for (const numBoxes of boxRange) {
       jobs.push(
         executeTopFrequenciesModel(
-          db,
-          items,
-          attrData,
-          idOrder,
-          numBoxes,
-          dimWeightFactor,
-          packMaterialCost,
-          corrugateCostPerSf,
-          freightCostPerLb,
-          "TopFrequencies"
+          db, items, attrData, idOrder, numBoxes,
+          dimWeightFactor, packMaterialCost, corrugateCostPerSf, freightCostPerLb,
+          "TopFrequencies",
+          { useKitFromTable: false }
         )
       );
     }
@@ -2476,16 +2642,10 @@ export const runTopFrequenciesModel = async (idOrder: number) => {
     if (currentBoxUsed > 0) {
       jobs.push(
         executeTopFrequenciesModel(
-          db,
-          items,
-          attrData,
-          idOrder,
-          currentBoxUsed,
-          dimWeightFactor,
-          packMaterialCost,
-          corrugateCostPerSf,
-          freightCostPerLb,
-          "CurrentTopFrequencies"
+          db, items, attrData, idOrder, currentBoxUsed,
+          dimWeightFactor, packMaterialCost, corrugateCostPerSf, freightCostPerLb,
+          "CurrentTopFrequencies",
+          { useKitFromTable: true } 
         )
       );
     }
@@ -2493,29 +2653,19 @@ export const runTopFrequenciesModel = async (idOrder: number) => {
     if (currentBoxUsed <= 0) {
       throw new Error("Attribute 'currentBoxUsed' must be > 0 when runCurrentBoxKitOnly = 1");
     }
-
     jobs.push(
       executeTopFrequenciesModel(
-        db,
-        items,
-        attrData,
-        idOrder,
-        currentBoxUsed,
-        dimWeightFactor,
-        packMaterialCost,
-        corrugateCostPerSf,
-        freightCostPerLb,
-        "CurrentTopFrequencies"
+        db, items, attrData, idOrder, currentBoxUsed,
+        dimWeightFactor, packMaterialCost, corrugateCostPerSf, freightCostPerLb,
+        "CurrentTopFrequencies",
+        { useKitFromTable: true }
       )
     );
   }
 
   await Promise.all(jobs);
 
-  return {
-    success: true,
-    message: "TopFrequencies model completed successfully (sin BoxKit)."
-  };
+  return { success: true, message: "TopFrequencies model completed successfully." };
 };
 
 // export async function executeTopFrequenciesModel(
@@ -2650,59 +2800,88 @@ export async function executeTopFrequenciesModel(
   packMaterialCost: number,
   corrugateCostPerSf: number,
   freightCostPerLb: number,
-  modelName: string
+  modelName: string,
+  opts: DistOptions = {}
 ) {
   if (!items.length) throw new Error("No items to process for TopFrequencies");
+  const useKitFromTable = !!opts.useKitFromTable;
 
-  const realBoundaries = getTopFrequenciesBoundaries(items, numBoxes);
+  const safeFloat = (n: any) => Number.isFinite(+n) ? +n : 0;
 
   const kitBoxTvp = makeKitBoxTVP();
   const resultTvp = makeResultTVP();
 
-  for (let i = 0; i < realBoundaries.length; i++) {
-    const b = realBoundaries[i];
-    const segmentItems = items.slice(b.start, b.end + 1);
+  if (useKitFromTable) {
+    const kitRs = await db.request()
+      .input('idOrder', idOrder)
+      .query(`
+        SELECT boxNumber, length AS boxLength, width AS boxWidth, height AS boxHeight
+        FROM TB_BoxKitFile
+        WHERE idOrder = @idOrder
+        ORDER BY boxNumber
+      `);
 
-    const fromRow = segmentItems.length ? b.start + 1 : 0;
-    const toRow   = segmentItems.length ? b.end + 1   : 0;
+    const kit = (kitRs.recordset || []).map((r: any) => ({
+      boxNumber: Number(r.boxNumber) || 0,
+      boxLength: safeFloat(r.boxLength),
+      boxWidth:  safeFloat(r.boxWidth),
+      boxHeight: safeFloat(r.boxHeight),
+    }));
 
-    const boxLength = segmentItems.length ? Math.max(...segmentItems.map(it => it.cubedItemLength)) : 1;
-    const boxWidth  = segmentItems.length ? Math.max(...segmentItems.map(it => it.cubedItemWidth )) : 1;
-    const boxHeight = segmentItems.length ? Math.max(...segmentItems.map(it => it.cubedItemHeight)) : 1;
+    if (!kit.length) {
+      throw new Error("No BoxKit found in TB_BoxKitFile for this order (required for Current* models).");
+    }
 
-    const { approxL: approxBoxLength, approxW: approxBoxWidth, approxH: approxBoxHeight } =
-      computeRoundedDimWeight(boxLength, boxWidth, boxHeight, dimWeightFactor);
+    for (const k of kit) {
+      const { approxL, approxW, approxH } =
+        computeRoundedDimWeight(k.boxLength, k.boxWidth, k.boxHeight, dimWeightFactor);
 
-    kitBoxTvp.rows.add(
-      idOrder,
-      `Box ${i + 1}`,
-      numBoxes,
-      boxLength,
-      boxWidth,
-      boxHeight,
-      fromRow,
-      toRow,
-      modelName,
-      numBoxes,
-      approxBoxLength,
-      approxBoxWidth,
-      approxBoxHeight
+      kitBoxTvp.rows.add(
+        idOrder,
+        `Box ${k.boxNumber}`,
+        k.boxNumber,                  
+        k.boxLength, k.boxWidth, k.boxHeight,
+        0, 0,
+        modelName,
+        kit.length,                   
+        approxL, approxW, approxH
+      );
+    }
+
+    const kitSorted = [...kit].sort((a,b) =>
+      (a.boxLength*a.boxWidth*a.boxHeight) - (b.boxLength*b.boxWidth*b.boxHeight)
     );
+    const pickKitForItem = (it: ShipmentItem) => {
+      const L = safeFloat(it.cubedItemLength);
+      const W = safeFloat(it.cubedItemWidth);
+      const H = safeFloat(it.cubedItemHeight);
+      const fit = kitSorted.find(k =>
+        k.boxLength >= L && k.boxWidth >= W && k.boxHeight >= H
+      );
+      return fit ?? kitSorted[kitSorted.length - 1];
+    };
 
-    for (const item of segmentItems) {
-      const itemVolume        = item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight;
-      const currentBoxVolume  = item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight;
-      const newBoxVolume      = boxLength * boxWidth * boxHeight;
+    for (const item of items) {
+      const k = pickKitForItem(item);
+      const boxLength = k.boxLength;
+      const boxWidth  = k.boxWidth;
+      const boxHeight = k.boxHeight;
 
-      const currentBoxCorrugateArea =
-        2 * (item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight)) +
-        2 * (item.currentAssignedBoxWidth  * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth));
-      const newBoxCorrugateArea =
-        2 * (boxLength * (boxWidth + boxHeight)) +
-        2 * (boxWidth  * (boxHeight + boxWidth));
+      const itemVolume        = safeFloat(item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight);
+      const currentBoxVolume  = safeFloat(item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight);
+      const newBoxVolume      = safeFloat(boxLength * boxWidth * boxHeight);
 
-      const currentBoxCorrugateCost = (currentBoxCorrugateArea / 144) * corrugateCostPerSf;
-      const newBoxCorrugateCost     = (newBoxCorrugateArea / 144) * corrugateCostPerSf;
+      const currentBoxCorrugateArea = safeFloat(
+        2 * item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
+        2 * item.currentAssignedBoxWidth  * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth)
+      );
+      const newBoxCorrugateArea = safeFloat(
+        2 * boxLength * (boxWidth + boxHeight) +
+        2 * boxWidth  * (boxHeight + boxWidth)
+      );
+
+      const currentBoxCorrugateCost = safeFloat((currentBoxCorrugateArea / 144) * corrugateCostPerSf);
+      const newBoxCorrugateCost     = safeFloat((newBoxCorrugateArea  / 144) * corrugateCostPerSf);
 
       const {
         dimWeightLb: currentDimWeightRounded,
@@ -2724,10 +2903,114 @@ export async function executeTopFrequenciesModel(
         approxH: newApproxHeight,
         raw: newDimWeightRaw
       } = computeRoundedDimWeight(
-        boxLength,
-        boxWidth,
-        boxHeight,
+        boxLength, boxWidth, boxHeight, dimWeightFactor
+      );
+
+      const actualWeightRounded   = Math.ceil(item.cubedItemWeight);
+      const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
+      const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
+
+      const currentFreightCost = safeFloat(currentBillableWeight * freightCostPerLb);
+      const newFreightCost     = safeFloat(newBillableWeight   * freightCostPerLb);
+
+      const currentVoidVolume = safeFloat((currentBoxVolume - itemVolume) / 1728);
+      const newVoidVolume     = safeFloat((newBoxVolume     - itemVolume) / 1728);
+
+      const currentVoidFillCost = safeFloat(currentVoidVolume * packMaterialCost);
+      const newVoidFillCost     = safeFloat(newVoidVolume   * packMaterialCost);
+
+      resultTvp.rows.add(
+        idOrder, attrData.id, item.id, modelName, kit.length,
+        boxLength, boxWidth, boxHeight,
+        currentBoxCorrugateArea, newBoxCorrugateArea,
+        currentBoxCorrugateCost,  newBoxCorrugateCost,
+        currentDimWeightRaw, newDimWeightRaw,
+        currentBillableWeight, newBillableWeight,
+        currentFreightCost,    newFreightCost,
+        currentVoidVolume, newVoidVolume,
+        currentVoidFillCost, newVoidFillCost,
+        currentDimWeightRounded, newDimWeightRounded,
+        currApproxLength, currApproxWidth, currApproxHeight,
+        newApproxLength,  newApproxWidth,  newApproxHeight,
+        currentDimWeightRaw, newDimWeightRaw
+      );
+    }
+
+    const req = new sql.Request(db);
+    req.input('KitBoxes', kitBoxTvp);
+    req.input('Results',  resultTvp);
+    await req.execute('usp_TopFrequencies_BulkInsert_V2');
+    return;
+  }
+
+  const realBoundaries = getTopFrequenciesBoundaries(items, numBoxes);
+
+  for (let i = 0; i < realBoundaries.length; i++) {
+    const b = realBoundaries[i];
+    const segmentItems = items.slice(b.start, b.end + 1);
+
+    const fromRow = segmentItems.length ? b.start + 1 : 0;
+    const toRow   = segmentItems.length ? b.end + 1   : 0;
+
+    const boxLength = segmentItems.length ? Math.max(...segmentItems.map(it => it.cubedItemLength)) : 1;
+    const boxWidth  = segmentItems.length ? Math.max(...segmentItems.map(it => it.cubedItemWidth )) : 1;
+    const boxHeight = segmentItems.length ? Math.max(...segmentItems.map(it => it.cubedItemHeight)) : 1;
+
+    const { approxL: approxBoxLength, approxW: approxBoxWidth, approxH: approxBoxHeight } =
+      computeRoundedDimWeight(boxLength, boxWidth, boxHeight, dimWeightFactor);
+
+    kitBoxTvp.rows.add(
+      idOrder,
+      `Box ${i + 1}`,
+      numBoxes,                    
+      boxLength,
+      boxWidth,
+      boxHeight,
+      fromRow,
+      toRow,
+      modelName,
+      numBoxes,                 
+      approxBoxLength,
+      approxBoxWidth,
+      approxBoxHeight
+    );
+
+    for (const item of segmentItems) {
+      const itemVolume        = item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight;
+      const currentBoxVolume  = item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight;
+      const newBoxVolume      = boxLength * boxWidth * boxHeight;
+
+      const currentBoxCorrugateArea =
+        2 * (item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight)) +
+        2 * (item.currentAssignedBoxWidth  * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth));
+      const newBoxCorrugateArea =
+        2 * (boxLength * (boxWidth + boxHeight)) +
+        2 * (boxWidth  * (boxHeight + boxWidth));
+
+      const currentBoxCorrugateCost = (currentBoxCorrugateArea / 144) * corrugateCostPerSf;
+      const newBoxCorrugateCost     = (newBoxCorrugateArea   / 144) * corrugateCostPerSf;
+
+      const {
+        dimWeightLb: currentDimWeightRounded,
+        approxL: currApproxLength,
+        approxW: currApproxWidth,
+        approxH: currApproxHeight,
+        raw: currentDimWeightRaw
+      } = computeRoundedDimWeight(
+        item.currentAssignedBoxLength,
+        item.currentAssignedBoxWidth,
+        item.currentAssignedBoxHeight,
         dimWeightFactor
+      );
+
+      const {
+        dimWeightLb: newDimWeightRounded,
+        approxL: newApproxLength,
+        approxW: newApproxWidth,
+        approxH: newApproxHeight,
+        raw: newDimWeightRaw
+      } = computeRoundedDimWeight(
+        boxLength, boxWidth, boxHeight, dimWeightFactor
       );
 
       const actualWeightRounded   = Math.ceil(item.cubedItemWeight);
@@ -2735,39 +3018,27 @@ export async function executeTopFrequenciesModel(
       const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
 
       const currentFreightCost = currentBillableWeight * freightCostPerLb;
-      const newFreightCost     = newBillableWeight     * freightCostPerLb;
+      const newFreightCost     = newBillableWeight   * freightCostPerLb;
 
       const currentVoidVolume = (currentBoxVolume - itemVolume) / 1728;
-      const newVoidVolume     = (newBoxVolume - itemVolume) / 1728;
+      const newVoidVolume     = (newBoxVolume     - itemVolume) / 1728;
 
       const currentVoidFillCost = currentVoidVolume * packMaterialCost;
-      const newVoidFillCost     = newVoidVolume * packMaterialCost;
+      const newVoidFillCost     = newVoidVolume   * packMaterialCost;
 
       resultTvp.rows.add(
-        idOrder,                    
-        attrData.id,                
-        item.id,                    
-        modelName,                  
-        numBoxes,                   
-
+        idOrder, attrData.id, item.id, modelName, numBoxes,
         boxLength, boxWidth, boxHeight,
-
         currentBoxCorrugateArea, newBoxCorrugateArea,
         currentBoxCorrugateCost,  newBoxCorrugateCost,
-
         currentDimWeightRaw, newDimWeightRaw,
-
         currentBillableWeight, newBillableWeight,
         currentFreightCost,    newFreightCost,
-
         currentVoidVolume, newVoidVolume,
         currentVoidFillCost, newVoidFillCost,
-
         currentDimWeightRounded, newDimWeightRounded,
-
         currApproxLength, currApproxWidth, currApproxHeight,
         newApproxLength,  newApproxWidth,  newApproxHeight,
-
         currentDimWeightRaw, newDimWeightRaw
       );
     }
@@ -2776,7 +3047,7 @@ export async function executeTopFrequenciesModel(
   const req = new sql.Request(db);
   req.input('KitBoxes', kitBoxTvp);
   req.input('Results',  resultTvp);
-  await req.execute('usp_TopFrequencies_BulkInsert_V2'); 
+  await req.execute('usp_TopFrequencies_BulkInsert_V2');
 }
 
 // async function executeEvenVolume(
@@ -2961,9 +3232,11 @@ export async function executeEvenVolume(
   modelName: string,
   fixedBoxLength?: number,
   fixedBoxWidth?: number,
-  fixedBoxHeight?: number
+  fixedBoxHeight?: number,
+  opts: DistOptions = {}
 ) {
   if (!items.length) throw new Error("No items to process");
+  const useKitFromTable = !!opts.useKitFromTable;
 
   type EnrichedItem = ShipmentItem & {
     itemVolume: number;
@@ -2973,6 +3246,141 @@ export async function executeEvenVolume(
 
   const safeFloat = (n: any) => Number.isFinite(+n) ? +n : 0;
 
+  const kitBoxTvp = makeKitBoxTVP();
+  const resultTvp = makeResultTVP();
+
+  if (useKitFromTable) {
+    const kitRs = await db.request()
+      .input('idOrder', idOrder)
+      .query(`
+        SELECT boxNumber, length AS boxLength, width AS boxWidth, height AS boxHeight
+        FROM TB_BoxKitFile
+        WHERE idOrder = @idOrder
+        ORDER BY boxNumber
+      `);
+
+    const kit = (kitRs.recordset || []).map((r: any) => ({
+      boxNumber: Number(r.boxNumber) || 0,
+      boxLength: safeFloat(r.boxLength),
+      boxWidth:  safeFloat(r.boxWidth),
+      boxHeight: safeFloat(r.boxHeight),
+    }));
+
+    if (!kit.length) {
+      throw new Error("No BoxKit found in TB_BoxKitFile for this order (required for Current* models).");
+    }
+
+    for (const k of kit) {
+      const { approxL, approxW, approxH } =
+        computeRoundedDimWeight(k.boxLength, k.boxWidth, k.boxHeight, dimWeightFactor);
+
+      kitBoxTvp.rows.add(
+        idOrder,
+        `Box ${k.boxNumber}`,
+        k.boxNumber,                
+        k.boxLength, k.boxWidth, k.boxHeight,
+        0, 0,                        
+        modelName,
+        kit.length,                  
+        approxL, approxW, approxH
+      );
+    }
+
+    const kitSorted = [...kit].sort((a,b) =>
+      (a.boxLength*a.boxWidth*a.boxHeight) - (b.boxLength*b.boxWidth*b.boxHeight)
+    );
+    const pickKitForItem = (it: ShipmentItem) => {
+      const L = safeFloat(it.cubedItemLength);
+      const W = safeFloat(it.cubedItemWidth);
+      const H = safeFloat(it.cubedItemHeight);
+      const fit = kitSorted.find(k =>
+        k.boxLength >= L && k.boxWidth >= W && k.boxHeight >= H
+      );
+      return fit ?? kitSorted[kitSorted.length - 1];
+    };
+
+    for (const item of items) {
+      const k = pickKitForItem(item);
+      const boxLength = k.boxLength;
+      const boxWidth  = k.boxWidth;
+      const boxHeight = k.boxHeight;
+
+      const currentArea = safeFloat(
+        2 * item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight) +
+        2 * item.currentAssignedBoxWidth  * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth)
+      );
+      const newArea = safeFloat(
+        2 * boxLength * (boxWidth + boxHeight) +
+        2 * boxWidth  * (boxHeight + boxWidth)
+      );
+
+      const currentBoxVolume = safeFloat(item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight);
+      const newBoxVolume     = safeFloat(boxLength * boxWidth * boxHeight);
+      const itemVolume       = safeFloat(item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight);
+
+      const currentCorrugateCost = safeFloat((currentArea / 144) * corrugateCostPerSf);
+      const newCorrugateCost     = safeFloat((newArea  / 144) * corrugateCostPerSf);
+
+      const {
+        dimWeightLb: currentDimWeightRounded,
+        approxL: currApproxLength,
+        approxW: currApproxWidth,
+        approxH: currApproxHeight,
+        raw: currentDimWeightRaw
+      } = computeRoundedDimWeight(
+        item.currentAssignedBoxLength,
+        item.currentAssignedBoxWidth,
+        item.currentAssignedBoxHeight,
+        dimWeightFactor
+      );
+
+      const {
+        dimWeightLb: newDimWeightRounded,
+        approxL: newApproxLength,
+        approxW: newApproxWidth,
+        approxH: newApproxHeight,
+        raw: newDimWeightRaw
+      } = computeRoundedDimWeight(
+        boxLength, boxWidth, boxHeight, dimWeightFactor
+      );
+
+      const actualWeightRounded   = Math.ceil(item.cubedItemWeight);
+      const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
+      const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
+
+      const currentFreightCost = safeFloat(currentBillableWeight * freightCostPerLb);
+      const newFreightCost     = safeFloat(newBillableWeight   * freightCostPerLb);
+
+      const currentVoidVolume = safeFloat((currentBoxVolume - itemVolume) / 1728);
+      const newVoidVolume     = safeFloat((newBoxVolume     - itemVolume) / 1728);
+
+      const currentVoidFillCost = safeFloat(currentVoidVolume * packMaterialCost);
+      const newVoidFillCost     = safeFloat(newVoidVolume   * packMaterialCost);
+
+      resultTvp.rows.add(
+        idOrder, attrData.id, item.id, modelName, kit.length, 
+        boxLength, boxWidth, boxHeight,
+        currentArea, newArea,
+        currentCorrugateCost, newCorrugateCost,
+        currentDimWeightRaw, newDimWeightRaw,
+        currentBillableWeight, newBillableWeight,
+        currentFreightCost, newFreightCost,
+        currentVoidVolume, newVoidVolume,
+        currentVoidFillCost, newVoidFillCost,
+        currentDimWeightRounded, newDimWeightRounded,
+        currApproxLength, currApproxWidth, currApproxHeight,
+        newApproxLength,  newApproxWidth,  newApproxHeight,
+        currentDimWeightRaw, newDimWeightRaw
+      );
+    }
+
+    const req = new sql.Request(db);
+    req.input('KitBoxes', kitBoxTvp);
+    req.input('Results',  resultTvp);
+    await req.execute('dbo.usp_EvenVolume_BulkInsert_V2');
+    return;
+  }
+
   const enrichedItems: EnrichedItem[] = items
     .map(item => ({
       ...item,
@@ -2981,6 +3389,7 @@ export async function executeEvenVolume(
     .sort((a, b) => b.cubedItemLength - a.cubedItemLength);
 
   const totalVolume = enrichedItems.reduce((sum, it) => sum + it.itemVolume, 0);
+
   let cumulativeVolume = 0;
   enrichedItems.forEach(it => {
     cumulativeVolume += it.itemVolume;
@@ -2993,15 +3402,15 @@ export async function executeEvenVolume(
 
   for (const target of volumeTargets) {
     const passedIdx = enrichedItems.findIndex(it => (it.cumulativePercentage ?? 0) >= target);
-    if (passedIdx === -1) continue;
-
-    const anchorLen = enrichedItems[passedIdx].cubedItemLength;
-    let lastIdx = passedIdx;
-    while (lastIdx + 1 < enrichedItems.length && enrichedItems[lastIdx + 1].cubedItemLength === anchorLen) {
-      lastIdx++;
+    if (passedIdx !== -1) {
+      const anchorLen = enrichedItems[passedIdx].cubedItemLength;
+      let lastIdx = passedIdx;
+      while (lastIdx + 1 < enrichedItems.length && enrichedItems[lastIdx + 1].cubedItemLength === anchorLen) {
+        lastIdx++;
+      }
+      const cut = lastIdx + 1;
+      if (cut > 0 && cut < enrichedItems.length) cutsSet.add(cut);
     }
-    const cut = lastIdx + 1;
-    if (cut > 0 && cut < enrichedItems.length) cutsSet.add(cut);
   }
 
   const need = (numBoxes - 1) - cutsSet.size;
@@ -3038,9 +3447,6 @@ export async function executeEvenVolume(
     segments.splice(biggestIdx, 1, left, right);
   }
 
-  const kitBoxTvp = makeKitBoxTVP();
-  const resultTvp = makeResultTVP();
-
   let runningIndex = 0;
   for (let i = 0; i < segments.length; i++) {
     const segItems = segments[i];
@@ -3065,16 +3471,11 @@ export async function executeEvenVolume(
       idOrder,
       `Box ${i + 1}`,
       numBoxes,
-      boxLength,
-      boxWidth,
-      boxHeight,
-      fromRow,
-      toRow,
+      boxLength, boxWidth, boxHeight,
+      fromRow, toRow,
       modelName,
       numBoxes,
-      approxBoxLength,
-      approxBoxWidth,
-      approxBoxHeight
+      approxBoxLength, approxBoxWidth, approxBoxHeight
     );
 
     for (const item of segItems) {
@@ -3114,10 +3515,7 @@ export async function executeEvenVolume(
         approxH: newApproxHeight,
         raw: newDimWeightRaw
       } = computeRoundedDimWeight(
-        boxLength,
-        boxWidth,
-        boxHeight,
-        dimWeightFactor
+        boxLength, boxWidth, boxHeight, dimWeightFactor
       );
 
       const actualWeightRounded   = Math.ceil(item.cubedItemWeight);
@@ -3134,30 +3532,18 @@ export async function executeEvenVolume(
       const newVoidFillCost     = safeFloat(newVoidVolume   * packMaterialCost);
 
       resultTvp.rows.add(
-        idOrder,
-        attrData.id,             
-        item.id,
-        modelName,
-        numBoxes,
-
+        idOrder, attrData.id, item.id, modelName, numBoxes,
         boxLength, boxWidth, boxHeight,
-
         currentArea, newArea,
         currentCorrugateCost, newCorrugateCost,
-
         currentDimWeightRaw, newDimWeightRaw,
-
         currentBillableWeight, newBillableWeight,
-        currentFreightCost,    newFreightCost,
-
+        currentFreightCost, newFreightCost,
         currentVoidVolume, newVoidVolume,
         currentVoidFillCost, newVoidFillCost,
-
         currentDimWeightRounded, newDimWeightRounded,
-
         currApproxLength, currApproxWidth, currApproxHeight,
         newApproxLength,  newApproxWidth,  newApproxHeight,
-
         currentDimWeightRaw, newDimWeightRaw
       );
     }
@@ -3187,7 +3573,11 @@ export const runEvenVolumeModel = async (idOrder: number) => {
   }
 
   const row = shipmentResult.recordset[0];
-  const isNormalized = row.cubedItemLength !== null && row.cubedItemLength !== undefined;
+  const isNormalized =
+    row.cubedItemLength > 0 &&
+    row.cubedItemWidth  > 0 &&
+    row.cubedItemHeight > 0 &&
+    row.cubedItemWeight > 0;
 
   const items: ShipmentItem[] = isNormalized
     ? shipmentResult.recordset
@@ -3222,16 +3612,11 @@ export const runEvenVolumeModel = async (idOrder: number) => {
     for (const numBoxes of boxRange) {
       jobs.push(
         executeEvenVolume(
-          db,
-          items,
-          attrData,
-          idOrder,
-          numBoxes,
-          dimWeightFactor,
-          packMaterialCost,
-          corrugateCostPerSf,
-          freightCostPerLb,
-          "EvenVolume"
+          db, items, attrData, idOrder, numBoxes,
+          dimWeightFactor, packMaterialCost, corrugateCostPerSf, freightCostPerLb,
+          "EvenVolume",
+          undefined, undefined, undefined,
+          { useKitFromTable: false }
         )
       );
     }
@@ -3239,16 +3624,11 @@ export const runEvenVolumeModel = async (idOrder: number) => {
     if (currentBoxUsed > 0) {
       jobs.push(
         executeEvenVolume(
-          db,
-          items,
-          attrData,
-          idOrder,
-          currentBoxUsed,
-          dimWeightFactor,
-          packMaterialCost,
-          corrugateCostPerSf,
-          freightCostPerLb,
-          "CurrentEvenVolume"
+          db, items, attrData, idOrder, currentBoxUsed,
+          dimWeightFactor, packMaterialCost, corrugateCostPerSf, freightCostPerLb,
+          "CurrentEvenVolume",
+          undefined, undefined, undefined,
+          { useKitFromTable: true }
         )
       );
     }
@@ -3256,29 +3636,20 @@ export const runEvenVolumeModel = async (idOrder: number) => {
     if (currentBoxUsed <= 0) {
       throw new Error("Attribute 'currentBoxUsed' must be > 0 when runCurrentBoxKitOnly = 1");
     }
-
     jobs.push(
       executeEvenVolume(
-        db,
-        items,
-        attrData,
-        idOrder,
-        currentBoxUsed,
-        dimWeightFactor,
-        packMaterialCost,
-        corrugateCostPerSf,
-        freightCostPerLb,
-        "CurrentEvenVolume"
+        db, items, attrData, idOrder, currentBoxUsed,
+        dimWeightFactor, packMaterialCost, corrugateCostPerSf, freightCostPerLb,
+        "CurrentEvenVolume",
+        undefined, undefined, undefined,
+        { useKitFromTable: true }
       )
     );
   }
 
   await Promise.all(jobs);
 
-  return {
-    success: true,
-    message: "RunEvenVolume model completed successfully (sin BoxKit)."
-  };
+  return { success: true, message: "RunEvenVolume model completed successfully." };
 };
 
 export const runEvenVolumeDinamicoModel = async (idOrder: number) => {
@@ -3293,6 +3664,7 @@ export const runEvenVolumeDinamicoModel = async (idOrder: number) => {
       WHERE idOrder = @idOrder
       ORDER BY cubedItemLength DESC
     `);
+
   if (!itemsResult?.recordset?.length) {
     throw new Error("No shipment data found for this order");
   }
@@ -3332,24 +3704,16 @@ export const runEvenVolumeDinamicoModel = async (idOrder: number) => {
   const jobs: Promise<any>[] = [];
 
   if (runCurrentBoxKitOnly === 0) {
-    const numBoxesArray = Array.from(
-      { length: maxBoxes - minBoxes + 1 },
-      (_, i) => minBoxes + i
-    );
+    const numBoxesArray = Array.from({ length: maxBoxes - minBoxes + 1 }, (_, i) => minBoxes + i);
 
     for (const numBoxes of numBoxesArray) {
       jobs.push(
         executeEvenVolumeDinamico(
-          db,
-          items,
-          attrData,
-          idOrder,
-          numBoxes,
-          dimWeightFactor,
-          packMaterialCost,
-          corrugateCostPerSf,
-          freightCostPerLb,
-          "EvenVolumeDynamic"
+          db, items, attrData, idOrder, numBoxes,
+          dimWeightFactor, packMaterialCost, corrugateCostPerSf, freightCostPerLb,
+          "EvenVolumeDynamic",
+          undefined, undefined, undefined,
+          { useKitFromTable: false } 
         )
       );
     }
@@ -3357,16 +3721,11 @@ export const runEvenVolumeDinamicoModel = async (idOrder: number) => {
     if (currentBoxUsed > 0) {
       jobs.push(
         executeEvenVolumeDinamico(
-          db,
-          items,
-          attrData,
-          idOrder,
-          currentBoxUsed,
-          dimWeightFactor,
-          packMaterialCost,
-          corrugateCostPerSf,
-          freightCostPerLb,
-          "CurrentEvenVolumeDynamic"
+          db, items, attrData, idOrder, currentBoxUsed,
+          dimWeightFactor, packMaterialCost, corrugateCostPerSf, freightCostPerLb,
+          "CurrentEvenVolumeDynamic",
+          undefined, undefined, undefined,
+          { useKitFromTable: true } 
         )
       );
     }
@@ -3374,19 +3733,13 @@ export const runEvenVolumeDinamicoModel = async (idOrder: number) => {
     if (currentBoxUsed <= 0) {
       throw new Error("Attribute 'currentBoxUsed' must be > 0 when runCurrentBoxKitOnly = 1");
     }
-
     jobs.push(
       executeEvenVolumeDinamico(
-        db,
-        items,
-        attrData,
-        idOrder,
-        currentBoxUsed,
-        dimWeightFactor,
-        packMaterialCost,
-        corrugateCostPerSf,
-        freightCostPerLb,
-        "CurrentEvenVolumeDynamic"
+        db, items, attrData, idOrder, currentBoxUsed,
+        dimWeightFactor, packMaterialCost, corrugateCostPerSf, freightCostPerLb,
+        "CurrentEvenVolumeDynamic",
+        undefined, undefined, undefined,
+        { useKitFromTable: true }
       )
     );
   }
@@ -3395,7 +3748,7 @@ export const runEvenVolumeDinamicoModel = async (idOrder: number) => {
 
   return {
     success: true,
-    message: "RunEvenVolumeDynamic model completed successfully (sin BoxKit)."
+    message: "RunEvenVolumeDynamic model completed successfully."
   };
 };
 
@@ -3561,11 +3914,148 @@ export async function executeEvenVolumeDinamico(
   modelName: string,
   fixedBoxLength?: number,
   fixedBoxWidth?: number,
-  fixedBoxHeight?: number
+  fixedBoxHeight?: number,
+  opts: DistOptions = {}
 ) {
   if (!items.length) throw new Error("No items to process");
+  const useKitFromTable = !!opts.useKitFromTable;
 
   const safeFloat = (n: any) => Number.isFinite(+n) ? +n : 0;
+
+  const kitBoxTvp = makeKitBoxTVP();
+  const resultTvp = makeResultTVP();
+
+  if (useKitFromTable) {
+    const kitRs = await db.request()
+      .input('idOrder', idOrder)
+      .query(`
+        SELECT boxNumber, length AS boxLength, width AS boxWidth, height AS boxHeight
+        FROM TB_BoxKitFile
+        WHERE idOrder = @idOrder
+        ORDER BY boxNumber
+      `);
+
+    const kit = (kitRs.recordset || []).map((r: any) => ({
+      boxNumber: Number(r.boxNumber) || 0,
+      boxLength: safeFloat(r.boxLength),
+      boxWidth:  safeFloat(r.boxWidth),
+      boxHeight: safeFloat(r.boxHeight),
+    }));
+
+    if (!kit.length) {
+      throw new Error("No BoxKit found in TB_BoxKitFile for this order (required for Current* models).");
+    }
+
+    for (const k of kit) {
+      const { approxL, approxW, approxH } =
+        computeRoundedDimWeight(k.boxLength, k.boxWidth, k.boxHeight, dimWeightFactor);
+
+      kitBoxTvp.rows.add(
+        idOrder,
+        `Box ${k.boxNumber}`,
+        k.boxNumber,                 
+        k.boxLength, k.boxWidth, k.boxHeight,
+        0, 0,                        
+        modelName,
+        kit.length,                  
+        approxL, approxW, approxH
+      );
+    }
+
+    const kitSorted = [...kit].sort((a,b) =>
+      (a.boxLength*a.boxWidth*a.boxHeight) - (b.boxLength*b.boxWidth*b.boxHeight)
+    );
+    const pickKitForItem = (it: ShipmentItem) => {
+      const L = safeFloat(it.cubedItemLength);
+      const W = safeFloat(it.cubedItemWidth);
+      const H = safeFloat(it.cubedItemHeight);
+      const fit = kitSorted.find(k =>
+        k.boxLength >= L && k.boxWidth >= W && k.boxHeight >= H
+      );
+      return fit ?? kitSorted[kitSorted.length - 1];
+    };
+
+    for (const item of items) {
+      const k = pickKitForItem(item);
+      const boxLength = k.boxLength;
+      const boxWidth  = k.boxWidth;
+      const boxHeight = k.boxHeight;
+
+      const currentArea = safeFloat(
+        2*(item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight)) +
+        2*(item.currentAssignedBoxWidth  * (item.currentAssignedBoxHeight + item.currentAssignedBoxWidth))
+      );
+      const newArea = safeFloat(
+        2*(boxLength * (boxWidth + boxHeight)) +
+        2*(boxWidth  * (boxHeight + boxWidth))
+      );
+
+      const currentBoxVolume = safeFloat(item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight);
+      const newBoxVolume     = safeFloat(boxLength * boxWidth * boxHeight);
+      const itemVolume       = safeFloat(item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight);
+
+      const currentCorrugateCost = safeFloat((currentArea / 144) * corrugateCostPerSf);
+      const newCorrugateCost     = safeFloat((newArea  / 144) * corrugateCostPerSf);
+
+      const {
+        dimWeightLb: currentDimWeightRounded,
+        approxL: currApproxLength,
+        approxW: currApproxWidth,
+        approxH: currApproxHeight,
+        raw: currentDimWeightRaw
+      } = computeRoundedDimWeight(
+        item.currentAssignedBoxLength,
+        item.currentAssignedBoxWidth,
+        item.currentAssignedBoxHeight,
+        dimWeightFactor
+      );
+
+      const {
+        dimWeightLb: newDimWeightRounded,
+        approxL: newApproxLength,
+        approxW: newApproxWidth,
+        approxH: newApproxHeight,
+        raw: newDimWeightRaw
+      } = computeRoundedDimWeight(
+        boxLength, boxWidth, boxHeight, dimWeightFactor
+      );
+
+      const actualWeightRounded   = Math.ceil(item.cubedItemWeight);
+      const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
+      const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
+
+      const currentFreightCost = safeFloat(currentBillableWeight * freightCostPerLb);
+      const newFreightCost     = safeFloat(newBillableWeight   * freightCostPerLb);
+
+      const currentVoidVolume = safeFloat((currentBoxVolume - itemVolume) / 1728);
+      const newVoidVolume     = safeFloat((newBoxVolume     - itemVolume) / 1728);
+
+      const currentVoidFillCost = safeFloat(currentVoidVolume * packMaterialCost);
+      const newVoidFillCost     = safeFloat(newVoidVolume   * packMaterialCost);
+
+      resultTvp.rows.add(
+        idOrder, attrData.id, item.id, modelName, kit.length,
+        boxLength, boxWidth, boxHeight,
+        currentArea, newArea,
+        currentCorrugateCost, newCorrugateCost,
+        currentDimWeightRaw, newDimWeightRaw,
+        currentBillableWeight, newBillableWeight,
+        currentFreightCost, newFreightCost,
+        currentVoidVolume, newVoidVolume,
+        currentVoidFillCost, newVoidFillCost,
+        currentDimWeightRounded, newDimWeightRounded,
+        currApproxLength, currApproxWidth, currApproxHeight,
+        newApproxLength,  newApproxWidth,  newApproxHeight,
+        currentDimWeightRaw, newDimWeightRaw
+      );
+    }
+
+    const req = new sql.Request(db);
+    req.input('KitBoxes', kitBoxTvp);
+    req.input('Results',  resultTvp);
+    await req.execute('dbo.usp_EvenVolumeDynamic_BulkInsert_V2');
+    return;
+  }
 
   const enrichedItems = items
     .map(item => ({
@@ -3613,9 +4103,6 @@ export async function executeEvenVolumeDinamico(
     ...splitSegment(segment3, boxes3)
   ];
 
-  const kitBoxTvp = makeKitBoxTVP();
-  const resultTvp = makeResultTVP();
-
   const itemBoxMap = new Map<number, { boxLength: number, boxWidth: number, boxHeight: number }>();
 
   let runningIndex = 0;
@@ -3640,16 +4127,11 @@ export async function executeEvenVolumeDinamico(
       idOrder,
       `Box ${i + 1}`,
       numBoxes,
-      boxLength,
-      boxWidth,
-      boxHeight,
-      fromRow,
-      toRow,
+      boxLength, boxWidth, boxHeight,
+      fromRow, toRow,
       modelName,
       numBoxes,
-      approxBoxLength,
-      approxBoxWidth,
-      approxBoxHeight
+      approxBoxLength, approxBoxWidth, approxBoxHeight
     );
 
     for (const item of seg) {
@@ -3698,10 +4180,7 @@ export async function executeEvenVolumeDinamico(
       approxH: newApproxHeight,
       raw: newDimWeightRaw
     } = computeRoundedDimWeight(
-      boxLength,
-      boxWidth,
-      boxHeight,
-      dimWeightFactor
+      boxLength, boxWidth, boxHeight, dimWeightFactor
     );
 
     const actualWeightRounded   = Math.ceil(item.cubedItemWeight);
@@ -3718,30 +4197,18 @@ export async function executeEvenVolumeDinamico(
     const newVoidFillCost     = safeFloat(newVoidVolume   * packMaterialCost);
 
     resultTvp.rows.add(
-      idOrder,
-      attrData.id,
-      item.id,
-      modelName,
-      numBoxes,
-
+      idOrder, attrData.id, item.id, modelName, numBoxes,
       boxLength, boxWidth, boxHeight,
-
       currentArea, newArea,
       currentCorrugateCost, newCorrugateCost,
-
       currentDimWeightRaw, newDimWeightRaw,
-
       currentBillableWeight, newBillableWeight,
-      currentFreightCost,    newFreightCost,
-
+      currentFreightCost, newFreightCost,
       currentVoidVolume, newVoidVolume,
       currentVoidFillCost, newVoidFillCost,
-
       currentDimWeightRounded, newDimWeightRounded,
-
       currApproxLength, currApproxWidth, currApproxHeight,
       newApproxLength,  newApproxWidth,  newApproxHeight,
-
       currentDimWeightRaw, newDimWeightRaw
     );
   }
