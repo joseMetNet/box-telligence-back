@@ -731,7 +731,8 @@ export const getBoxDimensionsByOrderAndModel = async (
   let result = await request.query(`
     SELECT DISTINCT
       boxLabel,
-      model,
+      /* ya es el modelo base */
+      @model AS model,
       boxNumber,
       CAST(boxLength AS FLOAT)  AS boxLength,
       CAST(boxWidth  AS FLOAT)  AS boxWidth,
@@ -747,20 +748,22 @@ export const getBoxDimensionsByOrderAndModel = async (
 
   let currentRequest = db.request()
     .input("idOrder", idOrder)
-    .input("model", currentModel);
+    .input("currentModel", currentModel)
+    .input("modelAlias", model);
 
   if (numBoxes !== undefined) currentRequest.input("numBoxes", numBoxes);
 
   const currentResult = await currentRequest.query(`
     SELECT DISTINCT
       boxLabel,
-      model,
-      boxNumber,
-      CAST(boxLength AS FLOAT) AS boxLength,
-      CAST(boxWidth  AS FLOAT) AS boxWidth,
-      CAST(boxHeight AS FLOAT) AS boxHeight
+      /* alias: devolvemos el nombre base para que no separe en la UI */
+      @modelAlias AS model,
+      numBoxes AS boxNumber,
+      CAST(boxLength AS FLOAT)  AS boxLength,
+      CAST(boxWidth  AS FLOAT)  AS boxWidth,
+      CAST(boxHeight AS FLOAT)  AS boxHeight
     FROM TB_KitBoxes
-    WHERE idOrder = @idOrder AND model = @model${numBoxesCondition}
+    WHERE idOrder = @idOrder AND model = @currentModel${numBoxesCondition}
     ORDER BY boxLength DESC, boxWidth DESC, boxHeight DESC;
   `);
 
