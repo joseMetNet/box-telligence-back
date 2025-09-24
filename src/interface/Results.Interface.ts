@@ -104,3 +104,7 @@ export interface IValidateResultResponse {
 }
 
 export type Boundary = { start: number; end: number };
+
+export type DistOptions = {
+  useKitFromTable?: boolean;
+};
