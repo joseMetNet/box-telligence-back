@@ -221,7 +221,7 @@ export const downloadExcelResultsByOrder = async (
       req.input(name, sql.NVarChar(100), m);
     });
 
-    // OJO: columnas V/W/X/Y ahora se fuerzan a enteros
+    // V/W/X/Y forzados a enteros, incluimos también raw/rounded y aprox
     const sqlText = `
       SELECT
         -- Identificadores
@@ -238,34 +238,34 @@ export const downloadExcelResultsByOrder = async (
         r.currentBoxCorrugateArea, r.newBoxCorrugateArea,
         r.currentBoxCorrugateCost, r.newBoxCorrugateCost,
 
-        /* ******* FORZAMOS ENTEROS EN V/W/X/Y ******* */
-        CAST(r.currentDimWeightRounded AS INT) AS currentDimWeight,     -- V
-        CAST(r.newDimWeightRounded     AS INT) AS newDimWeight,         -- W
+        /* ====== V/W: DIM enteros ====== */
+        CAST(r.currentDimWeightRounded AS INT) AS currentDimWeight,   -- V
+        CAST(r.newDimWeightRounded     AS INT) AS newDimWeight,       -- W
 
-        -- X/Y: billable = max( ceil(actual), DIM_rounded )
+        /* ====== X/Y: billable entero = max( ceil(peso real), DIM_rounded ) ====== */
         CASE
           WHEN CEILING(COALESCE(s.cubedItemWeight, 0)) > r.currentDimWeightRounded
           THEN CEILING(COALESCE(s.cubedItemWeight, 0))
           ELSE r.currentDimWeightRounded
-        END AS currentBillableWeight,                                   -- X
+        END AS currentBillableWeight,                                 -- X
         CASE
           WHEN CEILING(COALESCE(s.cubedItemWeight, 0)) > r.newDimWeightRounded
           THEN CEILING(COALESCE(s.cubedItemWeight, 0))
           ELSE r.newDimWeightRounded
-        END AS newBillableWeight,                                       -- Y
+        END AS newBillableWeight,                                     -- Y
 
-        -- Costos (calculados originalmente con billable); los dejamos igual
+        -- Costos de flete (consistentes con billable)
         r.currentFreightCost, r.newFreightCost,
 
         -- Void & Void Fill
         r.currentVoidVolume, r.newVoidVolume,
         r.currentVoidFillCost, r.newVoidFillCost,
 
-        /* ******* CAMPOS PARA COMPARAR ******* */
-        -- Raw = (ceil L * ceil W * ceil H)/factor, antes del último ceil
+        /* ====== Campos para comparar ====== */
+        -- Raw = (ceil L * ceil W * ceil H)/factor, antes del ceil final
         r.currentDimWeightRaw, r.newDimWeightRaw,
 
-        -- Redondeados finales (por si también los quieres ver explícitos)
+        -- Redondeados finales explícitos
         r.currentDimWeightRounded, r.newDimWeightRounded,
 
         -- Aproximaciones (L/W/H ceileadas)
@@ -278,7 +278,7 @@ export const downloadExcelResultsByOrder = async (
       LEFT JOIN TB_ShipmentDataFile s ON r.idShipmenDataFile = s.id
       WHERE r.idOrder = @idOrder
         AND r.model IN (${modelParams.join(',')})
-        AND s.id IS NOT NULL                       -- << filtra filas basura
+        AND s.id IS NOT NULL
       ORDER BY r.model, r.boxNumber, r.id;
     `;
 
@@ -293,9 +293,8 @@ export const downloadExcelResultsByOrder = async (
       console.error('downloadExcelResultsByOrder stream error:', err);
     });
 
-    // Cuando termine esta query, lanzamos la hoja de errores
+    // Al terminar, generamos hoja de errores (huérfanos)
     req.on('done', async () => {
-      // ---------- Hoja de errores: resultados huérfanos (s.id IS NULL) ----------
       try {
         const errReq = new sql.Request(db);
         errReq.stream = true;
@@ -336,7 +335,6 @@ export const downloadExcelResultsByOrder = async (
         });
 
         errReq.on('done', async () => {
-          // Cierra hojas y archivo
           for (const { ws } of sheets.values()) {
             (ws as any).commit?.();
           }
@@ -592,14 +590,15 @@ export const downloadExcelSumaryDataFromResults = async (
     const modelExists = allModels.includes(model);
     const currentExists = allModels.includes(currentModelName);
 
+    // Stats/summary cards
     const statsResult = await db
       .request()
       .input("idOrder", idOrder)
       .query(`
         SELECT 
           currentBoxUsed AS totalBoxesUsed,
-          minimunNumBox AS minBoxNumber,
-          maximunNumBox AS maxBoxNumber
+          minimunNumBox  AS minBoxNumber,
+          maximunNumBox  AS maxBoxNumber
         FROM TB_AttributeData
         WHERE idOrder = @idOrder
       `);
@@ -620,19 +619,25 @@ export const downloadExcelSumaryDataFromResults = async (
       { label: "Maximum Number of Boxes to Analyze", value: maxBoxNumber },
     ];
 
+    // NEW (escenario base)
     if (modelExists) {
       const resultsQuery = await db
         .request()
         .input("idOrder", idOrder)
         .input("model", model)
         .query(`
-          SELECT idOrder, model, boxNumber,
-                 SUM(CAST(newDimWeightRounded   AS FLOAT))            AS newBillableWeight,
-                 SUM(CAST(newFreightCost      AS FLOAT))            AS newFreightCost,
-                 SUM(CAST(newVoidVolume       AS FLOAT))            AS newVoidVolume,
-                 SUM(CAST(newVoidFillCost     AS FLOAT))            AS newVoidFillCost,
-                 SUM(CAST(newBoxCorrugateArea AS FLOAT)) / 144      AS newBoxCorrugateArea,
-                 SUM(CAST(newBoxCorrugateCost AS FLOAT))            AS newBoxCorrugateCost
+          SELECT 
+            idOrder, model, boxNumber,
+            /* Billable real (ENTERO) para cuadro/validación $1.00/lb */
+            SUM(CAST(newBillableWeight      AS FLOAT)) AS newBillableWeight,
+            /* DIM redondeado total (para comparación) */
+            SUM(CAST(newDimWeightRounded    AS FLOAT)) AS newDimWeightRounded,
+            /* Costos y otros agregados */
+            SUM(CAST(newFreightCost         AS FLOAT)) AS newFreightCost,
+            SUM(CAST(newVoidVolume          AS FLOAT)) AS newVoidVolume,
+            SUM(CAST(newVoidFillCost        AS FLOAT)) AS newVoidFillCost,
+            SUM(CAST(newBoxCorrugateArea    AS FLOAT)) / 144.0 AS newBoxCorrugateArea,
+            SUM(CAST(newBoxCorrugateCost    AS FLOAT)) AS newBoxCorrugateCost
           FROM TB_Results
           WHERE idOrder = @idOrder AND model = @model
           GROUP BY idOrder, model, boxNumber
@@ -643,19 +648,25 @@ export const downloadExcelSumaryDataFromResults = async (
       writeRows(`${model}_Results`, results);
     }
 
+    // CURRENT (escenario actual)
     if (currentExists) {
       const currentQuery = await db
         .request()
         .input("idOrder", idOrder)
         .input("model", currentModelName)
         .query(`
-          SELECT idOrder, model, boxNumber,
-                 SUM(CAST(currentDimWeightRounded   AS FLOAT))            AS currentBillableWeight,
-                 SUM(CAST(currentFreightCost      AS FLOAT))            AS currentFreightCost,
-                 SUM(CAST(currentVoidVolume       AS FLOAT))            AS currentVoidVolume,
-                 SUM(CAST(currentVoidFillCost     AS FLOAT))            AS currentVoidFillCost,
-                 SUM(CAST(currentBoxCorrugateArea AS FLOAT)) / 144      AS currentBoxCorrugateArea,
-                 SUM(CAST(currentBoxCorrugateCost AS FLOAT))            AS currentBoxCorrugateCost
+          SELECT 
+            idOrder, model, boxNumber,
+            /* Billable real (ENTERO) */
+            SUM(CAST(currentBillableWeight   AS FLOAT)) AS currentBillableWeight,
+            /* DIM redondeado total (para comparación) */
+            SUM(CAST(currentDimWeightRounded AS FLOAT)) AS currentDimWeightRounded,
+            /* Costos y otros agregados */
+            SUM(CAST(currentFreightCost      AS FLOAT)) AS currentFreightCost,
+            SUM(CAST(currentVoidVolume       AS FLOAT)) AS currentVoidVolume,
+            SUM(CAST(currentVoidFillCost     AS FLOAT)) AS currentVoidFillCost,
+            SUM(CAST(currentBoxCorrugateArea AS FLOAT)) / 144.0 AS currentBoxCorrugateArea,
+            SUM(CAST(currentBoxCorrugateCost AS FLOAT)) AS currentBoxCorrugateCost
           FROM TB_Results
           WHERE idOrder = @idOrder AND model = @model
           GROUP BY idOrder, model, boxNumber

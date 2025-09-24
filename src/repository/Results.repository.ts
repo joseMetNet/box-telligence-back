@@ -263,12 +263,16 @@ export const getResultsByOrder = async (
         const resultQuery = await req.query(`
           SELECT 
             idOrder, model, boxNumber,
-            SUM(CAST(newDimWeightRounded  AS FLOAT)) AS newBillableWeight,
-            SUM(CAST(newFreightCost       AS FLOAT)) AS newFreightCost,
-            SUM(CAST(newVoidVolume        AS FLOAT)) AS newVoidVolume,
-            SUM(CAST(newVoidFillCost      AS FLOAT)) AS newVoidFillCost,
-            SUM(CAST(newBoxCorrugateArea  AS FLOAT)) / 144.0 AS newBoxCorrugateArea,
-            SUM(CAST(newBoxCorrugateCost  AS FLOAT)) AS newBoxCorrugateCost
+            -- Billable real (entero): para pantallas/resumen
+            SUM(CAST(newBillableWeight      AS FLOAT)) AS newBillableWeight,
+            -- También exponemos DIM redondeado para comparar
+            SUM(CAST(newDimWeightRounded    AS FLOAT)) AS newDimWeightRounded,
+            -- Freight/otros
+            SUM(CAST(newFreightCost         AS FLOAT)) AS newFreightCost,
+            SUM(CAST(newVoidVolume          AS FLOAT)) AS newVoidVolume,
+            SUM(CAST(newVoidFillCost        AS FLOAT)) AS newVoidFillCost,
+            SUM(CAST(newBoxCorrugateArea    AS FLOAT)) / 144.0 AS newBoxCorrugateArea,
+            SUM(CAST(newBoxCorrugateCost    AS FLOAT)) AS newBoxCorrugateCost
           FROM TB_Results
           WHERE idOrder = @idOrder AND model = @model
             AND boxNumber IN (${inClause})
@@ -317,7 +321,11 @@ export const getResultsByOrder = async (
         .query(`
           SELECT 
             idOrder, model, boxNumber,
-            SUM(CAST(currentDimWeightRounded AS FLOAT)) AS newBillableWeight,
+            -- Billable real (entero): para pantallas/resumen
+            SUM(CAST(currentBillableWeight   AS FLOAT)) AS newBillableWeight,
+            -- También exponemos DIM redondeado para comparar
+            SUM(CAST(currentDimWeightRounded AS FLOAT)) AS newDimWeightRounded,
+            -- Freight/otros
             SUM(CAST(currentFreightCost      AS FLOAT)) AS newFreightCost,
             SUM(CAST(currentVoidVolume       AS FLOAT)) AS newVoidVolume,
             SUM(CAST(currentVoidFillCost     AS FLOAT)) AS newVoidFillCost,
@@ -350,6 +358,179 @@ export const getResultsByOrder = async (
 
   return { models: modelGroups };
 };
+
+// export const getResultsByOrder = async (
+//   idOrder: number,
+//   page: number = 1,
+//   pageSize: number = 10
+// ): Promise<IResultsPaginated> => {
+//   const db = await connectToSqlServer();
+//   if (!db) throw new Error("No se pudo conectar a la base de datos");
+
+//   const modelsResult = await db
+//     .request()
+//     .input("idOrder", idOrder)
+//     .query(`
+//       SELECT DISTINCT model
+//       FROM TB_Results
+//       WHERE idOrder = @idOrder
+//     `);
+
+//   const allModels = modelsResult.recordset.map((row: any) => row.model);
+
+//   const allowedModels = [
+//     "EvenDistribution",
+//     "EvenVolume",
+//     "EvenVolumeDynamic",
+//     "TopFrequencies",
+//   ] as const;
+
+//   const currentModels: Record<(typeof allowedModels)[number], string> = {
+//     EvenDistribution: "CurrentEvenDistribution",
+//     EvenVolume: "CurrentEvenVolume",
+//     EvenVolumeDynamic: "CurrentEvenVolumeDynamic",
+//     TopFrequencies: "CurrentTopFrequencies",
+//   };
+
+//   const filteredModels = allowedModels.filter(
+//     (model) => allModels.includes(model) || allModels.includes(currentModels[model])
+//   );
+
+//   const modelGroups: any[] = [];
+
+//   for (const model of filteredModels) {
+//     const currentModelName = currentModels[model];
+//     const modelExists = allModels.includes(model);
+//     const currentModelExists = allModels.includes(currentModelName);
+
+//     let results: any[] = [];
+//     let boxNumbers: number[] = [];
+//     let total = 0;
+
+//     if (modelExists) {
+//       const boxNumbersResult = await db
+//         .request()
+//         .input("idOrder", idOrder)
+//         .input("model", model)
+//         .input("pageSize", pageSize)
+//         .input("offset", (page - 1) * pageSize)
+//         .query(`
+//           SELECT DISTINCT boxNumber
+//           FROM TB_Results
+//           WHERE idOrder = @idOrder AND model = @model
+//           ORDER BY boxNumber
+//           OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+//         `);
+
+//       boxNumbers = boxNumbersResult.recordset.map((row: any) => Number(row.boxNumber));
+
+//       const totalBoxNumbersResult = await db
+//         .request()
+//         .input("idOrder", idOrder)
+//         .input("model", model)
+//         .query(`
+//           SELECT COUNT(DISTINCT boxNumber) AS total
+//           FROM TB_Results
+//           WHERE idOrder = @idOrder AND model = @model
+//         `);
+
+//       total = Number(totalBoxNumbersResult.recordset[0]?.total || 0);
+
+//       if (boxNumbers.length > 0) {
+//         const inClause = boxNumbers.map((_, i) => `@b${i}`).join(",");
+//         const req = db.request().input("idOrder", idOrder).input("model", model);
+//         boxNumbers.forEach((bn, i) => req.input(`b${i}`, bn));
+
+//         const resultQuery = await req.query(`
+//           SELECT 
+//             idOrder, model, boxNumber,
+//             SUM(CAST(newDimWeightRounded  AS FLOAT)) AS newBillableWeight,
+//             SUM(CAST(newFreightCost       AS FLOAT)) AS newFreightCost,
+//             SUM(CAST(newVoidVolume        AS FLOAT)) AS newVoidVolume,
+//             SUM(CAST(newVoidFillCost      AS FLOAT)) AS newVoidFillCost,
+//             SUM(CAST(newBoxCorrugateArea  AS FLOAT)) / 144.0 AS newBoxCorrugateArea,
+//             SUM(CAST(newBoxCorrugateCost  AS FLOAT)) AS newBoxCorrugateCost
+//           FROM TB_Results
+//           WHERE idOrder = @idOrder AND model = @model
+//             AND boxNumber IN (${inClause})
+//           GROUP BY idOrder, model, boxNumber
+//           ORDER BY boxNumber
+//         `);
+
+//         results = resultQuery.recordset;
+//       }
+//     }
+
+//     const statsResult = await db
+//       .request()
+//       .input("idOrder", idOrder)
+//       .query(`
+//         SELECT 
+//           currentBoxUsed   AS totalBoxesUsed,
+//           minimunNumBox    AS minBoxNumber,
+//           maximunNumBox    AS maxBoxNumber
+//         FROM TB_AttributeData
+//         WHERE idOrder = @idOrder
+//       `);
+
+//     const {
+//       totalBoxesUsed,
+//       minBoxNumber,
+//       maxBoxNumber
+//     } = statsResult.recordset[0] || {
+//       totalBoxesUsed: 0,
+//       minBoxNumber: null,
+//       maxBoxNumber: null
+//     };
+
+//     const summaryCards = [
+//       { label: "Current Number of Boxes Used", value: totalBoxesUsed },
+//       { label: "Minimum Number of Boxes to Analyze", value: minBoxNumber },
+//       { label: "Maximum Number of Boxes to Analyze", value: maxBoxNumber },
+//     ];
+
+//     let currentResults: any[] = [];
+//     if (currentModelExists) {
+//       const currentResultsQuery = await db
+//         .request()
+//         .input("idOrder", idOrder)
+//         .input("model", currentModelName)
+//         .query(`
+//           SELECT 
+//             idOrder, model, boxNumber,
+//             SUM(CAST(currentDimWeightRounded AS FLOAT)) AS newBillableWeight,
+//             SUM(CAST(currentFreightCost      AS FLOAT)) AS newFreightCost,
+//             SUM(CAST(currentVoidVolume       AS FLOAT)) AS newVoidVolume,
+//             SUM(CAST(currentVoidFillCost     AS FLOAT)) AS newVoidFillCost,
+//             SUM(CAST(currentBoxCorrugateArea AS FLOAT)) / 144.0 AS newBoxCorrugateArea,
+//             SUM(CAST(currentBoxCorrugateCost AS FLOAT)) AS newBoxCorrugateCost
+//           FROM TB_Results
+//           WHERE idOrder = @idOrder AND model = @model
+//           GROUP BY idOrder, model, boxNumber
+//           ORDER BY boxNumber
+//         `);
+
+//       currentResults = currentResultsQuery.recordset;
+//     }
+
+//     modelGroups.push({
+//       model,
+//       results,
+//       boxNumbers,
+//       total,
+//       page,
+//       pageSize,
+//       totalPages: Math.ceil(total / pageSize),
+//       summaryCards,
+//       totalBoxesUsed,
+//       minBoxNumber,
+//       maxBoxNumber,
+//       [currentModelName]: currentResults
+//     });
+//   }
+
+//   return { models: modelGroups };
+// };
 
 export const existsResultsByOrder = async (idOrder: number): Promise<1 | 0> => {
   const db = await connectToSqlServer();
@@ -2082,22 +2263,17 @@ export async function executeDistributionModel(
   } else {
     const targetRowsPerBox = totalRows / numBoxes;
     let startIdx = 0;
-
     for (let i = 0; i < numBoxes; i++) {
       let endIdx: number;
-
       if (i === numBoxes - 1) {
         endIdx = totalRows - 1;
       } else {
         let targetRowIdx = Math.floor(targetRowsPerBox * (i + 1));
         if (targetRowIdx >= totalRows) targetRowIdx = totalRows - 1;
-
         const targetLength = items[targetRowIdx].cubedItemLength;
         const firstMatchIdx = items.findIndex(it => it.cubedItemLength === targetLength);
-
         endIdx = Math.max(firstMatchIdx - 1, startIdx);
       }
-
       realBoundaries.push({ start: startIdx, end: endIdx });
       startIdx = endIdx + 1;
     }
@@ -2110,12 +2286,12 @@ export async function executeDistributionModel(
     const b = realBoundaries[i];
     const segmentItems = items.slice(b.start, b.end + 1);
 
-    const fromRow = segmentItems.length > 0 ? b.start + 1 : 0;
-    const toRow   = segmentItems.length > 0 ? b.end + 1   : 0;
+    const fromRow = segmentItems.length ? b.start + 1 : 0;
+    const toRow   = segmentItems.length ? b.end + 1   : 0;
 
-    const boxLength = fixedBoxLength ?? (segmentItems.length > 0 ? Math.max(...segmentItems.map(it => it.cubedItemLength)) : 1);
-    const boxWidth  = fixedBoxWidth  ?? (segmentItems.length > 0 ? Math.max(...segmentItems.map(it => it.cubedItemWidth )) : 1);
-    const boxHeight = fixedBoxHeight ?? (segmentItems.length > 0 ? Math.max(...segmentItems.map(it => it.cubedItemHeight)) : 1);
+    const boxLength = fixedBoxLength ?? (segmentItems.length ? Math.max(...segmentItems.map(it => it.cubedItemLength)) : 1);
+    const boxWidth  = fixedBoxWidth  ?? (segmentItems.length ? Math.max(...segmentItems.map(it => it.cubedItemWidth )) : 1);
+    const boxHeight = fixedBoxHeight ?? (segmentItems.length ? Math.max(...segmentItems.map(it => it.cubedItemHeight)) : 1);
 
     const { approxL: approxBoxLength, approxW: approxBoxWidth, approxH: approxBoxHeight } =
       computeRoundedDimWeight(boxLength, boxWidth, boxHeight, dimWeightFactor);
@@ -2137,9 +2313,9 @@ export async function executeDistributionModel(
     );
 
     for (const item of segmentItems) {
-      const itemVolume = item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight;
-      const currentBoxVolume = item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight;
-      const newBoxVolume = boxLength * boxWidth * boxHeight;
+      const itemVolume        = item.cubedItemLength * item.cubedItemWidth * item.cubedItemHeight;
+      const currentBoxVolume  = item.currentAssignedBoxLength * item.currentAssignedBoxWidth * item.currentAssignedBoxHeight;
+      const newBoxVolume      = boxLength * boxWidth * boxHeight;
 
       const currentArea =
         2 * (item.currentAssignedBoxLength * (item.currentAssignedBoxWidth + item.currentAssignedBoxHeight)) +
@@ -2149,7 +2325,7 @@ export async function executeDistributionModel(
         2 * (boxWidth  * (boxHeight + boxWidth));
 
       const currentCorrugateCost = (currentArea / 144) * corrugateCostPerSf;
-      const newCorrugateCost     = (newArea / 144) * corrugateCostPerSf;
+      const newCorrugateCost     = (newArea   / 144) * corrugateCostPerSf;
 
       const {
         dimWeightLb: currentDimWeightRounded,
@@ -2177,18 +2353,18 @@ export async function executeDistributionModel(
         dimWeightFactor
       );
 
-const actualWeightRounded = Math.ceil(item.cubedItemWeight);
-const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
-const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
+      const actualWeightRounded   = Math.ceil(item.cubedItemWeight);
+      const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
+      const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
 
       const currentFreightCost = currentBillableWeight * freightCostPerLb;
-      const newFreightCost     = newBillableWeight * freightCostPerLb;
+      const newFreightCost     = newBillableWeight     * freightCostPerLb;
 
       const currentVoidVolume = (currentBoxVolume - itemVolume) / 1728;
-      const newVoidVolume     = (newBoxVolume - itemVolume) / 1728;
+      const newVoidVolume     = (newBoxVolume     - itemVolume) / 1728;
 
       const currentVoidFillCost = currentVoidVolume * packMaterialCost;
-      const newVoidFillCost     = newVoidVolume * packMaterialCost;
+      const newVoidFillCost     = newVoidVolume   * packMaterialCost;
 
       resultTvp.rows.add(
         idOrder,                 
@@ -2205,7 +2381,7 @@ const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded)
         currentDimWeightRaw, newDimWeightRaw,
 
         currentBillableWeight, newBillableWeight,
-        currentFreightCost, newFreightCost,
+        currentFreightCost,    newFreightCost,
 
         currentVoidVolume, newVoidVolume,
         currentVoidFillCost, newVoidFillCost,
@@ -2478,7 +2654,6 @@ export async function executeTopFrequenciesModel(
 ) {
   if (!items.length) throw new Error("No items to process for TopFrequencies");
 
-
   const realBoundaries = getTopFrequenciesBoundaries(items, numBoxes);
 
   const kitBoxTvp = makeKitBoxTVP();
@@ -2499,11 +2674,19 @@ export async function executeTopFrequenciesModel(
       computeRoundedDimWeight(boxLength, boxWidth, boxHeight, dimWeightFactor);
 
     kitBoxTvp.rows.add(
-      idOrder, `Box ${i + 1}`, numBoxes,
-      boxLength, boxWidth, boxHeight,
-      fromRow, toRow, modelName,
+      idOrder,
+      `Box ${i + 1}`,
       numBoxes,
-      approxBoxLength, approxBoxWidth, approxBoxHeight
+      boxLength,
+      boxWidth,
+      boxHeight,
+      fromRow,
+      toRow,
+      modelName,
+      numBoxes,
+      approxBoxLength,
+      approxBoxWidth,
+      approxBoxHeight
     );
 
     for (const item of segmentItems) {
@@ -2547,12 +2730,12 @@ export async function executeTopFrequenciesModel(
         dimWeightFactor
       );
 
-const actualWeightRounded = Math.ceil(item.cubedItemWeight);
-const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
-const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
+      const actualWeightRounded   = Math.ceil(item.cubedItemWeight);
+      const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
+      const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
 
       const currentFreightCost = currentBillableWeight * freightCostPerLb;
-      const newFreightCost     = newBillableWeight * freightCostPerLb;
+      const newFreightCost     = newBillableWeight     * freightCostPerLb;
 
       const currentVoidVolume = (currentBoxVolume - itemVolume) / 1728;
       const newVoidVolume     = (newBoxVolume - itemVolume) / 1728;
@@ -2567,7 +2750,7 @@ const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded)
         modelName,                  
         numBoxes,                   
 
-        boxLength, boxWidth, boxHeight, 
+        boxLength, boxWidth, boxHeight,
 
         currentBoxCorrugateArea, newBoxCorrugateArea,
         currentBoxCorrugateCost,  newBoxCorrugateCost,
@@ -2798,7 +2981,6 @@ export async function executeEvenVolume(
     .sort((a, b) => b.cubedItemLength - a.cubedItemLength);
 
   const totalVolume = enrichedItems.reduce((sum, it) => sum + it.itemVolume, 0);
-
   let cumulativeVolume = 0;
   enrichedItems.forEach(it => {
     cumulativeVolume += it.itemVolume;
@@ -2938,9 +3120,9 @@ export async function executeEvenVolume(
         dimWeightFactor
       );
 
-const actualWeightRounded = Math.ceil(item.cubedItemWeight);
-const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
-const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
+      const actualWeightRounded   = Math.ceil(item.cubedItemWeight);
+      const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
+      const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
 
       const currentFreightCost = safeFloat(currentBillableWeight * freightCostPerLb);
       const newFreightCost     = safeFloat(newBillableWeight   * freightCostPerLb);
@@ -2952,11 +3134,12 @@ const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded)
       const newVoidFillCost     = safeFloat(newVoidVolume   * packMaterialCost);
 
       resultTvp.rows.add(
-        idOrder,               
-        attrData.id,           
-        item.id,               
-        modelName,             
-        numBoxes,              
+        idOrder,
+        attrData.id,             
+        item.id,
+        modelName,
+        numBoxes,
+
         boxLength, boxWidth, boxHeight,
 
         currentArea, newArea,
@@ -2965,7 +3148,7 @@ const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded)
         currentDimWeightRaw, newDimWeightRaw,
 
         currentBillableWeight, newBillableWeight,
-        currentFreightCost, newFreightCost,
+        currentFreightCost,    newFreightCost,
 
         currentVoidVolume, newVoidVolume,
         currentVoidFillCost, newVoidFillCost,
@@ -3382,6 +3565,8 @@ export async function executeEvenVolumeDinamico(
 ) {
   if (!items.length) throw new Error("No items to process");
 
+  const safeFloat = (n: any) => Number.isFinite(+n) ? +n : 0;
+
   const enrichedItems = items
     .map(item => ({
       ...item,
@@ -3519,9 +3704,9 @@ export async function executeEvenVolumeDinamico(
       dimWeightFactor
     );
 
-const actualWeightRounded = Math.ceil(item.cubedItemWeight);
-const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
-const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
+    const actualWeightRounded   = Math.ceil(item.cubedItemWeight);
+    const currentBillableWeight = Math.max(actualWeightRounded, currentDimWeightRounded);
+    const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded);
 
     const currentFreightCost = safeFloat(currentBillableWeight * freightCostPerLb);
     const newFreightCost     = safeFloat(newBillableWeight   * freightCostPerLb);
@@ -3533,11 +3718,11 @@ const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded)
     const newVoidFillCost     = safeFloat(newVoidVolume   * packMaterialCost);
 
     resultTvp.rows.add(
-      idOrder,                 
-      attrData.id,             
-      item.id,                 
-      modelName,               
-      numBoxes,                
+      idOrder,
+      attrData.id,
+      item.id,
+      modelName,
+      numBoxes,
 
       boxLength, boxWidth, boxHeight,
 
@@ -3547,7 +3732,7 @@ const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded)
       currentDimWeightRaw, newDimWeightRaw,
 
       currentBillableWeight, newBillableWeight,
-      currentFreightCost, newFreightCost,
+      currentFreightCost,    newFreightCost,
 
       currentVoidVolume, newVoidVolume,
       currentVoidFillCost, newVoidFillCost,
@@ -3564,7 +3749,7 @@ const newBillableWeight     = Math.max(actualWeightRounded, newDimWeightRounded)
   const req = new sql.Request(db);
   req.input('KitBoxes', kitBoxTvp);
   req.input('Results',  resultTvp);
-  await req.execute('dbo.usp_EvenVolumeDynamic_BulkInsert_V2'); 
+  await req.execute('dbo.usp_EvenVolumeDynamic_BulkInsert_V2');
 }
 
 export function getTopFrequenciesBoundaries(
